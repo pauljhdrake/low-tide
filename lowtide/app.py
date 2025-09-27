@@ -1,9 +1,24 @@
 from __future__ import annotations
-import webbrowser
+import subprocess, shutil, webbrowser
 from textual.app import App, ComposeResult
 from textual.widgets import Header, Footer, Label, Button, Input, ListView, ListItem
 from textual.containers import Vertical
+from textual.events import Key
 from lowtide.tidal_client import TidalClient
+
+def open_url(url: str) -> bool:
+    try:
+        if webbrowser.open_new_tab(url):
+            return True
+    except Exception:
+        pass
+    if shutil.which("xdg-open"):
+        try:
+            subprocess.Popen(["xdg-open", url])
+            return True
+        except Exception:
+            pass
+    return False
 
 def display_user(user) -> str:
     for attr in ("name", "username", "userName", "full_name", "email"):
@@ -31,8 +46,8 @@ class LowTideApp(App):
         self.status = Label("Ready.")
         self.user_label = Label("")
         self.search_input = Input(placeholder="Type to search… (press Enter)")
-        self.results = ListView()
-        self._search_hits = []  # list of tuples: (kind, obj)
+        self.results = ListView(id="results")
+        self.results.can_focus = True
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -54,6 +69,9 @@ class LowTideApp(App):
         except Exception as e:
             self.status.update(f"Not logged in: {e!r}")
 
+    async def action_focus_search(self) -> None:
+        self.set_focus(self.search_input)
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "refresh-user":
             try:
@@ -68,52 +86,68 @@ class LowTideApp(App):
         if not query:
             return
         self.status.update(f"Searching “{query}”…")
-        # Use tidalapi search via underlying session
-        s = self.client.session
-        # Returns dict-like: tracks, albums, artists, playlists (lists of objects)
-        hits = s.search(query, limit=25)
+        hits = self.client.session.search(query, limit=25)
         self._populate_results(hits)
-        self.status.update(f"Found {len(hits.get('tracks', []))} tracks, {len(hits.get('albums', []))} albums.")
+        # focus list + select first
+        self.set_focus(self.results)
+        if self.results.children:
+            try:
+                self.results.index = 0
+            except Exception:
+                try:
+                    self.results.action_cursor_home()
+                except Exception:
+                    pass
+        t, a = len(hits.get("tracks", [])), len(hits.get("albums", []))
+        self.status.update(f"Found {t} tracks, {a} albums.")
 
     def _populate_results(self, hits: dict) -> None:
         self.results.clear()
-        self._search_hits.clear()
 
-        # Show tracks first
+        # tracks
         for t in hits.get("tracks", []):
-            primary = f"{getattr(t, 'name', '(unknown)')}"
-            artist = getattr(getattr(t, 'artist', None), 'name', '—')
-            album = getattr(getattr(t, 'album', None), 'name', '—')
-            dur = getattr(t, 'duration', 0)
-            m, s = divmod(int(dur), 60)
-            secondary = f"{artist} • {album} • {m}:{s:02d}"
-            item = ListItem(Label(primary), Label(secondary))
+            name = getattr(t, "name", "(unknown)")
+            artist = getattr(getattr(t, "artist", None), "name", "—")
+            album = getattr(getattr(t, "album", None), "name", "—")
+            dur = int(getattr(t, "duration", 0))
+            m, s = divmod(dur, 60)
+            item = ListItem(Label(name), Label(f"{artist} • {album} • {m}:{s:02d}"))
             item.data = ("track", t)
             self.results.append(item)
-            self._search_hits.append(("track", t))
 
-        # Then albums
+        # albums
         for a in hits.get("albums", []):
-            primary = f"{getattr(a, 'name', '(unknown)')}"
-            artist = getattr(getattr(a, 'artist', None), 'name', '—')
-            tracks = getattr(a, 'number_of_tracks', 0)
-            secondary = f"{artist} • {tracks} tracks"
-            item = ListItem(Label(primary), Label(secondary))
+            name = getattr(a, "name", "(unknown)")
+            artist = getattr(getattr(a, "artist", None), "name", "—")
+            ntracks = getattr(a, "number_of_tracks", 0)
+            item = ListItem(Label(name), Label(f"{artist} • {ntracks} tracks"))
             item.data = ("album", a)
             self.results.append(item)
-            self._search_hits.append(("album", a))
 
-    async def action_focus_search(self) -> None:
-        self.set_focus(self.search_input)
+    async def _open_item(self, kind, obj):
+        url = f"https://listen.tidal.com/{'track' if kind=='track' else 'album'}/{obj.id}"
+        print("Opening:", url)
+        ok = open_url(url)
+        self.status.update("Opening in TIDAL web player…" if ok else "Failed to open URL.")
+
+    async def on_list_view_submitted(self, event: ListView.Submitted) -> None:
+        kind, obj = event.item.data
+        await self._open_item(kind, obj)
 
     async def action_open_selected(self) -> None:
-        if self.results.index is None:
+        if not self.results.has_focus:
+            self.status.update("Open: list not focused")
             return
-        item = self.results.get_child_at_index(self.results.index)
-        kind, obj = item.data  # ("track"|"album", tidalapi object)
-        if kind == "track":
-            webbrowser.open(f"https://tidal.com/browse/track/{obj.id}")
-            self.status.update("Opening track in TIDAL web player…")
-        elif kind == "album":
-            webbrowser.open(f"https://tidal.com/browse/album/{obj.id}")
-            self.status.update("Opening album in TIDAL web player…")
+        items = [c for c in self.results.children if isinstance(c, ListItem)]
+        if not items:
+            self.status.update("Open: no results")
+            return
+        idx = getattr(self.results, "index", 0) or 0
+        idx = max(0, min(idx, len(items) - 1))
+        kind, obj = items[idx].data
+        await self._open_item(kind, obj)
+
+    async def on_key(self, event: Key) -> None:
+        if event.key in ("enter", "return") and self.results.has_focus:
+            await self.action_open_selected()
+            event.stop()
