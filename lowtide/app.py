@@ -251,22 +251,23 @@ class LowTideApp(App):
     # --- Public: enqueue & play ---
 
     def enqueue_and_play(self, tracks: list, start_index: int = 0) -> None:
-        self._queue = list(tracks)
-        self._current_idx = start_index
+        # Rotate so the selected track is at position 0, matching mpv's playlist order.
+        # self._queue[N] will always equal mpv playlist position N.
+        rotated = tracks[start_index:] + tracks[:start_index]
+        self._queue = rotated
+        self._current_idx = 0
         self._queue_gen += 1
-        self._load_queue(tracks, start_index, self._queue_gen)
+        self._load_queue(rotated, self._queue_gen)
 
     @work(thread=True)
-    def _load_queue(self, tracks: list, start_index: int, gen: int) -> None:
-        for offset in range(len(tracks)):
+    def _load_queue(self, tracks: list, gen: int) -> None:
+        for i, track in enumerate(tracks):
             if self._queue_gen != gen:
                 return  # a newer enqueue_and_play was called — abort
-            i = (start_index + offset) % len(tracks)
-            track = tracks[i]
             url = self.client.get_track_url(track)
             if not url or self._queue_gen != gen:
                 continue
-            if offset == 0:
+            if i == 0:
                 self.call_from_thread(
                     lambda u=url: asyncio.ensure_future(self.player.play(u))
                 )
