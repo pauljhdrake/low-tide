@@ -5,6 +5,8 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python and [Text
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
+![low-tide screenshot](assets/screenshot.jpg)
+
 ## Features
 
 - Browse your playlists, favourites, and TIDAL's "For You" and Mixes

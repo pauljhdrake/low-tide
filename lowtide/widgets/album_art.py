@@ -51,11 +51,13 @@ class AlbumArt(Widget):
             resp = requests.get(url, timeout=5)
             resp.raise_for_status()
             img = PILImage.open(BytesIO(resp.content)).convert("RGB")
-            self.app.call_from_thread(self._apply, img)
+            self.app.call_from_thread(self._apply, img, url)
         except Exception:
             pass
 
-    def _apply(self, img: PILImage.Image) -> None:
+    def _apply(self, img: PILImage.Image, url: str) -> None:
+        if url != self._current_url:
+            return  # a newer track started before this fetch completed
         widget = self.query_one(TImage)
         widget.image = img
         widget.refresh(layout=True)
