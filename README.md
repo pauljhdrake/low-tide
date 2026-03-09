@@ -9,7 +9,7 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python and [Text
 
 - Browse your playlists, favourites, and TIDAL's "For You" and Mixes
 - Search tracks, albums, and artists
-- Full playback via `mpv` — no browser, no Electron
+- Full playback via `mpv` - no browser, no Electron
 - Album art rendered inline using the kitty graphics protocol
 - Queue management with click-to-skip
 - Album and artist drill-down views
@@ -19,8 +19,8 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python and [Text
 
 - **Python 3.11+**
 - **A TIDAL subscription** (HiFi or higher recommended for lossless streams)
-- **mpv** — for audio playback
-- **kitty** (recommended) — for inline album art; other terminals will work without art
+- **mpv** - for audio playback
+- **kitty** (recommended) - for inline album art; other terminals will work without art
 
 ### Installing mpv
 
@@ -52,7 +52,7 @@ pip install -r requirements.txt
 python -m lowtide.main
 ```
 
-On first launch, you will be prompted to authenticate with TIDAL via a device-code login (a URL is printed — open it in your browser). Tokens are saved to `~/.config/low-tide/session.json` and reused on future launches.
+On first launch, you will be prompted to authenticate with TIDAL via a device-code login (a URL is printed - open it in your browser). Tokens are saved to `~/.config/low-tide/session.json` and reused on future launches.
 
 ## Keybindings
 
