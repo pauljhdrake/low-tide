@@ -1,153 +1,377 @@
 from __future__ import annotations
-import subprocess, shutil, webbrowser
+
+import asyncio
+from typing import Optional
+
+from textual import work
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, Label, Button, Input, ListView, ListItem
-from textual.containers import Vertical
-from textual.events import Key
+from textual.binding import Binding
+from textual.containers import Horizontal
+from textual.widget import Widget
+from textual.widgets import Label, ListItem, ListView
+
+from lowtide.player import Player
+from lowtide.screens.library import LibraryScreen
+from lowtide.screens.search import SearchScreen
 from lowtide.tidal_client import TidalClient
+from lowtide.widgets.album_art import AlbumArt
+from lowtide.widgets.now_playing import NowPlayingBar
 
-def open_url(url: str) -> bool:
-    try:
-        if webbrowser.open_new_tab(url):
-            return True
-    except Exception:
-        pass
-    if shutil.which("xdg-open"):
-        try:
-            subprocess.Popen(["xdg-open", url])
-            return True
-        except Exception:
-            pass
-    return False
 
-def display_user(user) -> str:
-    for attr in ("name", "username", "userName", "full_name", "email"):
-        val = getattr(user, attr, None)
-        if val:
-            return str(val)
-    return f"id {getattr(user, 'id', '?')}"
+# ---------------------------------------------------------------------------
+# Sidebar
+# ---------------------------------------------------------------------------
+
+_NAV = [
+    ("library", "Library"),
+    ("search", "Search"),
+    ("favorites", "Favorites"),
+]
+
+
+class Sidebar(Widget):
+    DEFAULT_CSS = """
+    Sidebar {
+        width: 24;
+        height: 100%;
+        background: transparent;
+        border-right: tall $primary-darken-3;
+        padding: 1 0;
+    }
+    Sidebar AlbumArt {
+        width: 22;
+        height: 11;
+        margin: 0 1 1 1;
+    }
+    Sidebar #app-title {
+        padding: 0 2;
+        text-style: bold;
+        color: $primary;
+        margin-bottom: 1;
+    }
+    Sidebar ListView {
+        background: transparent;
+        height: 1fr;
+    }
+    Sidebar ListItem {
+        padding: 0 2;
+        background: transparent;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield AlbumArt(id="sidebar-art")
+        yield Label("low-tide", id="app-title")
+        with ListView(id="nav"):
+            for key, label in _NAV:
+                item = ListItem(Label(label))
+                item._nav_key = key
+                yield item
+
+    def on_mount(self) -> None:
+        self.query_one(ListView).index = 0
+
+    def select(self, key: str) -> None:
+        lv = self.query_one(ListView)
+        for i, item in enumerate(lv._nodes):
+            if getattr(item, "_nav_key", None) == key:
+                lv.index = i
+                break
+
+    def update_art(self, url: str | None) -> None:
+        self.query_one(AlbumArt).load(url)
+
+
+# ---------------------------------------------------------------------------
+# Content area
+# ---------------------------------------------------------------------------
+
+class ContentArea(Widget):
+    DEFAULT_CSS = """
+    ContentArea {
+        width: 1fr;
+        height: 100%;
+        background: transparent;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield LibraryScreen()
+
+    def on_mount(self) -> None:
+        self._stack: list[Widget] = list(self.children)
+
+    async def push(self, widget: Widget) -> None:
+        if self._stack:
+            self._stack[-1].display = False
+        self._stack.append(widget)
+        await self.mount(widget)
+
+    async def pop(self) -> bool:
+        if len(self._stack) > 1:
+            old = self._stack.pop()
+            await old.remove()
+            if self._stack:
+                self._stack[-1].display = True
+            return True
+        return False
+
+    async def replace(self, widget: Widget) -> None:
+        for w in list(self._stack):
+            await w.remove()
+        self._stack = [widget]
+        await self.mount(widget)
+
+
+# ---------------------------------------------------------------------------
+# Queue panel
+# ---------------------------------------------------------------------------
+
+class QueuePanel(Widget):
+    DEFAULT_CSS = """
+    QueuePanel {
+        width: 30;
+        height: 100%;
+        background: transparent;
+        border-left: tall $primary-darken-3;
+        padding: 1;
+        display: none;
+    }
+    QueuePanel #queue-heading {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    QueuePanel ListView {
+        height: 1fr;
+        background: transparent;
+    }
+    QueuePanel ListItem {
+        background: transparent;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Label("Queue", id="queue-heading")
+        yield ListView(id="queue-list")
+
+    def refresh_queue(self, tracks: list, current_idx: int) -> None:
+        lv = self.query_one(ListView)
+        lv.clear()
+        for i, t in enumerate(tracks):
+            name = getattr(t, "name", "?")
+            artist = getattr(getattr(t, "artist", None), "name", "—")
+            marker = "▶ " if i == current_idx else "  "
+            item = ListItem(Label(f"{marker}[b]{name}[/b]\n[dim]{artist}[/dim]"))
+            item._queue_index = i
+            lv.append(item)
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        idx = getattr(event.item, "_queue_index", None)
+        if idx is not None:
+            asyncio.ensure_future(self.app.jump_to_queue_index(idx))
+
+
+# ---------------------------------------------------------------------------
+# Main App
+# ---------------------------------------------------------------------------
 
 class LowTideApp(App):
     CSS = """
-    Screen { align: center middle; }
-    #box { width: 80; border: round; padding: 1 2; }
-    #results { height: 16; }
+    Screen {
+        background: transparent;
+        layout: vertical;
+    }
+    #main {
+        layout: horizontal;
+        height: 1fr;
+        background: transparent;
+    }
     """
 
     BINDINGS = [
-        ("q", "quit", "Quit"),
-        ("/", "focus_search", "Search"),
-        ("enter", "open_selected", "Open"),
+        Binding("space", "toggle_pause", "Play/Pause"),
+        Binding("n", "next_track", "Next"),
+        Binding("p", "prev_track", "Prev"),
+        Binding("]", "volume_up", "Vol+", show=False),
+        Binding("[", "volume_down", "Vol-", show=False),
+        Binding("q", "toggle_queue", "Queue"),
+        Binding("escape", "go_back", "Back", show=False),
+        Binding("ctrl+s", "focus_search", "Search"),
+        Binding("ctrl+l", "focus_library", "Library"),
     ]
 
     def __init__(self, client: TidalClient):
         super().__init__()
         self.client = client
-        self.status = Label("Ready.")
-        self.user_label = Label("")
-        self.search_input = Input(placeholder="Type to search… (press Enter)")
-        self.results = ListView(id="results")
-        self.results.can_focus = True
+        self.player = Player()
+        self._queue: list = []
+        self._current_idx: int = -1
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=False)
-        with Vertical(id="box"):
-            yield Label("low-tide — TIDAL in your terminal", id="title")
-            yield self.status
-            yield self.user_label
-            yield self.search_input
-            yield Label("Results:")
-            yield self.results
-            yield Button("Refresh user", id="refresh-user")
-        yield Footer()
+        with Horizontal(id="main"):
+            yield Sidebar()
+            yield ContentArea()
+            yield QueuePanel()
+        yield NowPlayingBar()
 
     async def on_mount(self) -> None:
         try:
-            user = self.client.me()
-            self.status.update("Logged in ✔")
-            self.user_label.update(f"Hello, {display_user(user)} (user id: {getattr(user, 'id', '?')})")
+            await self.player.start()
+        except RuntimeError as e:
+            self.notify(str(e), severity="error", timeout=10)
+            return
+        self.player.on_track_start.append(self._on_mpv_track_start)
+        self.set_interval(1.0, self._poll_player)
+
+    # --- Player polling ---
+
+    async def _poll_player(self) -> None:
+        bar = self.query_one(NowPlayingBar)
+        bar.position = await self.player.get_position()
+        bar.duration = await self.player.get_duration()
+        bar.paused = await self.player.get_paused()
+        bar.volume = self.player.volume
+
+    async def _on_mpv_track_start(self) -> None:
+        pos = await self.player.get_playlist_pos()
+        if 0 <= pos < len(self._queue):
+            self._current_idx = pos
+            self._set_current_track(self._queue[pos])
+            self.query_one(QueuePanel).refresh_queue(self._queue, self._current_idx)
+
+    def _set_current_track(self, track) -> None:
+        self.query_one(NowPlayingBar).set_track(track)
+        try:
+            art_url = track.album.image(320)
+        except Exception:
+            art_url = None
+        self.query_one(Sidebar).update_art(art_url)
+
+    # --- Public: enqueue & play ---
+
+    def enqueue_and_play(self, tracks: list, start_index: int = 0) -> None:
+        self._queue = list(tracks)
+        self._current_idx = start_index
+        self._load_queue(tracks, start_index)
+
+    @work(thread=True)
+    def _load_queue(self, tracks: list, start_index: int) -> None:
+        for offset in range(len(tracks)):
+            i = (start_index + offset) % len(tracks)
+            track = tracks[i]
+            url = self.client.get_track_url(track)
+            if not url:
+                continue
+            if offset == 0:
+                self.call_from_thread(
+                    lambda u=url: asyncio.ensure_future(self.player.play(u))
+                )
+                self.call_from_thread(self._set_current_track, track)
+            else:
+                self.call_from_thread(
+                    lambda u=url: asyncio.ensure_future(self.player.append(u))
+                )
+        self.call_from_thread(
+            lambda: self.query_one(QueuePanel).refresh_queue(self._queue, self._current_idx)
+        )
+
+    async def jump_to_queue_index(self, idx: int) -> None:
+        """Skip playback to a specific queue position."""
+        if 0 <= idx < len(self._queue):
+            # mpv playlist-play-index jumps to a position
+            await self.player._cmd(["set_property", "playlist-pos", idx])
+
+    # --- Open objects (albums, artists, mixes, playlists) by type ---
+
+    def open_object(self, obj) -> None:
+        """Route any tidalapi object to the appropriate screen."""
+        from lowtide.screens.album import AlbumScreen
+        from lowtide.screens.artist import ArtistScreen
+        from lowtide.screens.playlist import PlaylistScreen
+
+        type_name = type(obj).__name__.lower()
+
+        if "album" in type_name:
+            asyncio.ensure_future(self.push_view(AlbumScreen(obj)))
+        elif "artist" in type_name:
+            asyncio.ensure_future(self.push_view(ArtistScreen(obj)))
+        elif "playlist" in type_name or "userplaylist" in type_name:
+            asyncio.ensure_future(self.push_view(PlaylistScreen(obj)))
+        elif "mix" in type_name:
+            self._open_mix(obj)
+        else:
+            # Fallback: try playlist-style tracks() call
+            asyncio.ensure_future(self.push_view(PlaylistScreen(obj)))
+
+    @work(thread=True)
+    def _open_mix(self, mix) -> None:
+        try:
+            tracks = self.client.get_mix_tracks(mix)
+            if tracks:
+                self.call_from_thread(lambda: self.enqueue_and_play(tracks, 0))
         except Exception as e:
-            self.status.update(f"Not logged in: {e!r}")
+            self.call_from_thread(
+                lambda: self.notify(f"Could not load mix: {e}", severity="warning")
+            )
+
+    # --- Navigation ---
+
+    async def push_view(self, widget: Widget) -> None:
+        await self.query_one(ContentArea).push(widget)
+
+    async def action_go_back(self) -> None:
+        await self.query_one(ContentArea).pop()
+
+    async def _switch_root(self, widget: Widget, nav_key: str) -> None:
+        await self.query_one(ContentArea).replace(widget)
+        self.query_one(Sidebar).select(nav_key)
 
     async def action_focus_search(self) -> None:
-        self.set_focus(self.search_input)
+        await self._switch_root(SearchScreen(), "search")
 
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "refresh-user":
-            try:
-                user = self.client.me()
-                self.status.update("Logged in ✔")
-                self.user_label.update(f"Hello, {display_user(user)} (user id: {getattr(user, 'id', '?')})")
-            except Exception as e:
-                self.status.update(f"Not logged in: {e!r}")
+    async def action_focus_library(self) -> None:
+        await self._switch_root(LibraryScreen(), "library")
 
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        query = event.value.strip()
-        if not query:
-            return
-        self.status.update(f"Searching “{query}”…")
-        hits = self.client.session.search(query, limit=25)
-        self._populate_results(hits)
-        # focus list + select first
-        self.set_focus(self.results)
-        if self.results.children:
-            try:
-                self.results.index = 0
-            except Exception:
-                try:
-                    self.results.action_cursor_home()
-                except Exception:
-                    pass
-        t, a = len(hits.get("tracks", [])), len(hits.get("albums", []))
-        self.status.update(f"Found {t} tracks, {a} albums.")
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        key = getattr(event.item, "_nav_key", None)
+        if key and event.list_view.id == "nav":
+            if key == "library":
+                asyncio.ensure_future(self.action_focus_library())
+            elif key == "search":
+                asyncio.ensure_future(self.action_focus_search())
+            elif key == "favorites":
+                asyncio.ensure_future(self._open_favorites())
 
-    def _populate_results(self, hits: dict) -> None:
-        self.results.clear()
+    async def _open_favorites(self) -> None:
+        from lowtide.screens.favorites import FavoritesScreen
+        await self._switch_root(FavoritesScreen(), "favorites")
 
-        # tracks
-        for t in hits.get("tracks", []):
-            name = getattr(t, "name", "(unknown)")
-            artist = getattr(getattr(t, "artist", None), "name", "—")
-            album = getattr(getattr(t, "album", None), "name", "—")
-            dur = int(getattr(t, "duration", 0))
-            m, s = divmod(dur, 60)
-            item = ListItem(Label(name), Label(f"{artist} • {album} • {m}:{s:02d}"))
-            item.data = ("track", t)
-            self.results.append(item)
+    def on_library_screen_playlist_selected(
+        self, event: LibraryScreen.PlaylistSelected
+    ) -> None:
+        from lowtide.screens.playlist import PlaylistScreen
+        asyncio.ensure_future(self.push_view(PlaylistScreen(event.playlist)))
 
-        # albums
-        for a in hits.get("albums", []):
-            name = getattr(a, "name", "(unknown)")
-            artist = getattr(getattr(a, "artist", None), "name", "—")
-            ntracks = getattr(a, "number_of_tracks", 0)
-            item = ListItem(Label(name), Label(f"{artist} • {ntracks} tracks"))
-            item.data = ("album", a)
-            self.results.append(item)
+    # --- Playback actions ---
 
-    async def _open_item(self, kind, obj):
-        url = f"https://listen.tidal.com/{'track' if kind=='track' else 'album'}/{obj.id}"
-        print("Opening:", url)
-        ok = open_url(url)
-        self.status.update("Opening in TIDAL web player…" if ok else "Failed to open URL.")
+    async def action_toggle_pause(self) -> None:
+        await self.player.toggle_pause()
 
-    async def on_list_view_submitted(self, event: ListView.Submitted) -> None:
-        kind, obj = event.item.data
-        await self._open_item(kind, obj)
+    async def action_next_track(self) -> None:
+        await self.player.next()
 
-    async def action_open_selected(self) -> None:
-        if not self.results.has_focus:
-            self.status.update("Open: list not focused")
-            return
-        items = [c for c in self.results.children if isinstance(c, ListItem)]
-        if not items:
-            self.status.update("Open: no results")
-            return
-        idx = getattr(self.results, "index", 0) or 0
-        idx = max(0, min(idx, len(items) - 1))
-        kind, obj = items[idx].data
-        await self._open_item(kind, obj)
+    async def action_prev_track(self) -> None:
+        await self.player.prev()
 
-    async def on_key(self, event: Key) -> None:
-        if event.key in ("enter", "return") and self.results.has_focus:
-            await self.action_open_selected()
-            event.stop()
+    async def action_volume_up(self) -> None:
+        await self.player.set_volume(self.player.volume + 5)
+
+    async def action_volume_down(self) -> None:
+        await self.player.set_volume(self.player.volume - 5)
+
+    async def action_toggle_queue(self) -> None:
+        panel = self.query_one(QueuePanel)
+        panel.display = not panel.display
+
+    async def on_unmount(self) -> None:
+        await self.player.shutdown()
