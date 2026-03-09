@@ -206,6 +206,7 @@ class LowTideApp(App):
         self.player = Player()
         self._queue: list = []
         self._current_idx: int = -1
+        self._queue_gen: int = 0  # incremented on each new enqueue to cancel stale workers
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="main"):
@@ -252,15 +253,18 @@ class LowTideApp(App):
     def enqueue_and_play(self, tracks: list, start_index: int = 0) -> None:
         self._queue = list(tracks)
         self._current_idx = start_index
-        self._load_queue(tracks, start_index)
+        self._queue_gen += 1
+        self._load_queue(tracks, start_index, self._queue_gen)
 
     @work(thread=True)
-    def _load_queue(self, tracks: list, start_index: int) -> None:
+    def _load_queue(self, tracks: list, start_index: int, gen: int) -> None:
         for offset in range(len(tracks)):
+            if self._queue_gen != gen:
+                return  # a newer enqueue_and_play was called — abort
             i = (start_index + offset) % len(tracks)
             track = tracks[i]
             url = self.client.get_track_url(track)
-            if not url:
+            if not url or self._queue_gen != gen:
                 continue
             if offset == 0:
                 self.call_from_thread(
@@ -271,9 +275,10 @@ class LowTideApp(App):
                 self.call_from_thread(
                     lambda u=url: asyncio.ensure_future(self.player.append(u))
                 )
-        self.call_from_thread(
-            lambda: self.query_one(QueuePanel).refresh_queue(self._queue, self._current_idx)
-        )
+        if self._queue_gen == gen:
+            self.call_from_thread(
+                lambda: self.query_one(QueuePanel).refresh_queue(self._queue, self._current_idx)
+            )
 
     async def jump_to_queue_index(self, idx: int) -> None:
         """Skip playback to a specific queue position."""
