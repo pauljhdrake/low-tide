@@ -42,19 +42,24 @@ brew install mpv
 ```bash
 git clone https://github.com/pauljhdrake/low-tide.git
 cd low-tide
-python -m venv .venv
-source .venv/bin/activate      # bash/zsh
-# source .venv/bin/activate.fish  # fish
-pip install -r requirements.txt
+pip install .
+```
+
+This installs all Python dependencies and adds a `low-tide` command to your PATH.
+
+For an editable install (if you want to hack on it):
+
+```bash
+pip install -e .
 ```
 
 ## Running
 
 ```bash
-python -m lowtide.main
+low-tide
 ```
 
-On first launch, you will be prompted to authenticate with TIDAL via a device-code login (a URL is printed - open it in your browser). Tokens are saved to `~/.config/low-tide/session.json` and reused on future launches.
+On first launch you will be prompted to authenticate with TIDAL via a device-code login (a URL is printed — open it in your browser). Tokens are saved to `~/.config/low-tide/session.json` and reused on future launches.
 
 ## Keybindings
 

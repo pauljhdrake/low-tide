@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "low-tide"
+version = "0.1.0"
+description = "A terminal UI client for TIDAL"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = [
+    "tidalapi>=0.8.11",
+    "textual>=8.0.0",
+    "textual-image>=0.8.5",
+    "Pillow>=11.0.0",
+]
+
+[project.scripts]
+low-tide = "lowtide.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["lowtide*"]
