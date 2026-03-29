@@ -73,7 +73,9 @@ class TidalClient:
         return album.tracks()
 
     def get_playlist_tracks(self, playlist) -> list:
-        return playlist.tracks()
+        if hasattr(playlist, "tracks"):
+            return playlist.tracks()
+        return playlist.items()
 
     def get_artist_albums(self, artist) -> list:
         return artist.get_albums()

@@ -304,21 +304,10 @@ class LowTideApp(App):
         elif "playlist" in type_name or "userplaylist" in type_name:
             asyncio.ensure_future(self.push_view(PlaylistScreen(obj)))
         elif "mix" in type_name:
-            self._open_mix(obj)
+            asyncio.ensure_future(self.push_view(PlaylistScreen(obj, autoplay=True)))
         else:
             # Fallback: try playlist-style tracks() call
             asyncio.ensure_future(self.push_view(PlaylistScreen(obj)))
-
-    @work(thread=True)
-    def _open_mix(self, mix) -> None:
-        try:
-            tracks = self.client.get_mix_tracks(mix)
-            if tracks:
-                self.call_from_thread(lambda: self.enqueue_and_play(tracks, 0))
-        except Exception as e:
-            self.call_from_thread(
-                lambda: self.notify(f"Could not load mix: {e}", severity="warning")
-            )
 
     # --- Navigation ---
 
@@ -338,25 +327,19 @@ class LowTideApp(App):
     async def action_focus_library(self) -> None:
         await self._switch_root(LibraryScreen(), "library")
 
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
+    async def on_list_view_selected(self, event: ListView.Selected) -> None:
         key = getattr(event.item, "_nav_key", None)
         if key and event.list_view.id == "nav":
             if key == "library":
-                asyncio.ensure_future(self.action_focus_library())
+                await self.action_focus_library()
             elif key == "search":
-                asyncio.ensure_future(self.action_focus_search())
+                await self.action_focus_search()
             elif key == "favorites":
-                asyncio.ensure_future(self._open_favorites())
+                await self._open_favorites()
 
     async def _open_favorites(self) -> None:
         from lowtide.screens.favorites import FavoritesScreen
         await self._switch_root(FavoritesScreen(), "favorites")
-
-    def on_library_screen_playlist_selected(
-        self, event: LibraryScreen.PlaylistSelected
-    ) -> None:
-        from lowtide.screens.playlist import PlaylistScreen
-        asyncio.ensure_future(self.push_view(PlaylistScreen(event.playlist)))
 
     # --- Playback actions ---
 

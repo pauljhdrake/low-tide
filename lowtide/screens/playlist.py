@@ -24,12 +24,13 @@ class PlaylistScreen(Widget):
     }
     """
 
-    def __init__(self, playlist, **kwargs):
+    def __init__(self, playlist, autoplay: bool = False, **kwargs):
         super().__init__(**kwargs)
         self._playlist = playlist
+        self._autoplay = autoplay
 
     def compose(self) -> ComposeResult:
-        name = getattr(self._playlist, "name", "Playlist")
+        name = getattr(self._playlist, "name", getattr(self._playlist, "title", "Playlist"))
         yield Label(name, id="pl-heading")
         yield Label("Loading…", id="pl-status")
         yield TrackList(id="pl-tracks")
@@ -53,6 +54,8 @@ class PlaylistScreen(Widget):
             f"[dim]{len(tracks)} tracks[/dim]"
         )
         self.query_one(TrackList).load(tracks)
+        if self._autoplay and tracks:
+            self.app.enqueue_and_play(tracks, start_index=0)
 
     def on_track_list_track_selected(self, event: TrackList.TrackSelected) -> None:
         all_tracks = self.query_one(TrackList).tracks

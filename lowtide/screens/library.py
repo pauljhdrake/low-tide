@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from textual import work
 from textual.app import ComposeResult
-from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Label, ListItem, ListView, TabPane, TabbedContent
 
@@ -25,11 +24,6 @@ class LibraryScreen(Widget):
         height: 1fr;
     }
     """
-
-    class PlaylistSelected(Message):
-        def __init__(self, playlist) -> None:
-            super().__init__()
-            self.playlist = playlist
 
     def compose(self) -> ComposeResult:
         yield Label("Library", id="lib-heading")
@@ -129,11 +123,13 @@ class LibraryScreen(Widget):
             item._mix = mix
             lv.append(item)
 
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
+    async def on_list_view_selected(self, event: ListView.Selected) -> None:
+        from lowtide.screens.playlist import PlaylistScreen
+
         # Playlist
         pl = getattr(event.item, "_playlist", None)
         if pl:
-            self.post_message(self.PlaylistSelected(pl))
+            await self.app.push_view(PlaylistScreen(pl))
             return
         # For You item
         obj = getattr(event.item, "_obj", None)

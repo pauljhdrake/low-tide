@@ -43,6 +43,7 @@ class TrackList(Widget):
         table = self.query_one(DataTable)
         table.clear()
         self._fill(table)
+        table.focus()
 
     def _fill(self, table: DataTable) -> None:
         for i, t in enumerate(self._tracks):
