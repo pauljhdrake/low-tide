@@ -102,15 +102,6 @@ background_opacity 0.85
 - **Album art requires kitty** — the kitty graphics protocol is used for inline images; other terminals will show the app without art
 - **No MQA/Atmos support** — stream quality depends on your subscription; format handling is delegated to mpv
 
-## Contributing
-
-Contributions are welcome. Please open an issue before starting significant work so we can discuss the approach. For smaller fixes, a PR is fine directly.
-
-When contributing:
-- Create a feature branch (`feat/description`) or fix branch (`fix/description`)
-- Keep PRs focused — one thing per PR
-- The project has no test suite yet, so manual testing notes in the PR description are appreciated
-
 ## Project Structure
 
 ```
