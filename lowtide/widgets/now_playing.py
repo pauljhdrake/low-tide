@@ -97,6 +97,7 @@ class NowPlayingBar(Widget):
     NowPlayingBar #np-modes {
         width: 10;
         content-align: right middle;
+        margin-left: 2;
     }
     """
 
