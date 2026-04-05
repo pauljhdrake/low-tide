@@ -69,12 +69,12 @@ class NowPlayingBar(Widget):
     NowPlayingBar .lyric-line {
         height: 1;
         color: $text-muted;
-        padding: 0 2;
+        text-align: center;
     }
     NowPlayingBar .lyric-current {
         height: 1;
         text-style: bold;
-        padding: 0 2;
+        text-align: center;
     }
     NowPlayingBar #np-bottom {
         height: 1;
@@ -226,8 +226,8 @@ class NowPlayingBar(Widget):
             if 0 <= line_idx < len(lines):
                 text = lines[line_idx].text
                 if offset == 0:
-                    label.update(f"[b]▶  {text}[/b]")
+                    label.update(f"[b]{text}[/b]")
                 else:
-                    label.update(f"[dim]   {text}[/dim]")
+                    label.update(f"[dim]{text}[/dim]")
             else:
                 label.update("")
