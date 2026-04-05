@@ -10,6 +10,7 @@ from textual.containers import Horizontal
 from textual.widget import Widget
 from textual.widgets import Label, ListItem, ListView
 
+from lowtide.mpris import MPRISService
 from lowtide.player import Player
 from lowtide.screens.library import LibraryScreen
 from lowtide.screens.search import SearchScreen
@@ -159,7 +160,7 @@ class QueuePanel(Widget):
         lv.clear()
         for i, t in enumerate(tracks):
             name = getattr(t, "name", "?")
-            artist = getattr(getattr(t, "artist", None), "name", "—")
+            artist = getattr(getattr(t, "artist", None), "name", "–")
             marker = "▶ " if i == current_idx else "  "
             item = ListItem(Label(f"{marker}[b]{name}[/b]\n[dim]{artist}[/dim]"))
             item._queue_index = i
@@ -207,7 +208,8 @@ class LowTideApp(App):
     def __init__(self, client: TidalClient):
         super().__init__()
         self.client = client
-        self.player = Player()
+        self.player = Player(config=client.config)
+        self.mpris = MPRISService(self)
         self._queue: list = []
         self._current_idx: int = -1
         self._queue_gen: int = 0  # incremented on each new enqueue to cancel stale workers
@@ -227,17 +229,23 @@ class LowTideApp(App):
         except RuntimeError as e:
             self.notify(str(e), severity="error", timeout=10)
             return
+        await self.mpris.start()
         self.player.on_track_start.append(self._on_mpv_track_start)
         self.set_interval(1.0, self._poll_player)
+        self._restore_queue()
 
     # --- Player polling ---
 
     async def _poll_player(self) -> None:
         bar = self.query_one(NowPlayingBar)
-        bar.position = await self.player.get_position()
+        position = await self.player.get_position()
+        paused = await self.player.get_paused()
+        bar.position = position
         bar.duration = await self.player.get_duration()
-        bar.paused = await self.player.get_paused()
+        bar.paused = paused
         bar.volume = self.player.volume
+        self.mpris.update_position(position)
+        self.mpris.update_playback_status(paused)
 
     async def _on_mpv_track_start(self) -> None:
         pos = await self.player.get_playlist_pos()
@@ -257,6 +265,7 @@ class LowTideApp(App):
         except Exception:
             art_url = None
         self.query_one(Sidebar).update_art(art_url)
+        self.mpris.update_track(track)
 
     # --- Public: enqueue & play ---
 
@@ -277,7 +286,7 @@ class LowTideApp(App):
 
     def append_to_queue(self, tracks: list) -> None:
         if not self._queue:
-            # Nothing playing yet — just start playback
+            # Nothing playing yet – just start playback
             self.enqueue_and_play(tracks)
             return
         self._queue.extend(tracks)
@@ -291,7 +300,7 @@ class LowTideApp(App):
     def _load_queue(self, tracks: list, gen: int) -> None:
         for i, track in enumerate(tracks):
             if self._queue_gen != gen:
-                return  # a newer enqueue_and_play was called — abort
+                return  # a newer enqueue_and_play was called – abort
             url = self.client.get_track_url(track)
             if not url or self._queue_gen != gen:
                 continue
@@ -388,12 +397,14 @@ class LowTideApp(App):
     async def action_toggle_shuffle(self) -> None:
         self.player.shuffle = not self.player.shuffle
         self.query_one(NowPlayingBar).shuffle = self.player.shuffle
+        self.mpris.update_shuffle(self.player.shuffle)
         state = "on" if self.player.shuffle else "off"
         self.notify(f"Shuffle {state}")
 
     async def action_toggle_repeat(self) -> None:
         await self.player.toggle_repeat()
         self.query_one(NowPlayingBar).repeat = self.player.repeat
+        self.mpris.update_loop_status(self.player.repeat)
         state = "on" if self.player.repeat else "off"
         self.notify(f"Repeat {state}")
 
@@ -430,13 +441,66 @@ class LowTideApp(App):
 
     async def action_volume_up(self) -> None:
         await self.player.set_volume(self.player.volume + 5)
+        self.mpris.update_volume(self.player.volume)
 
     async def action_volume_down(self) -> None:
         await self.player.set_volume(self.player.volume - 5)
+        self.mpris.update_volume(self.player.volume)
 
     async def action_toggle_queue(self) -> None:
         panel = self.query_one(QueuePanel)
         panel.display = not panel.display
 
+    def _save_queue(self) -> None:
+        from lowtide.tidal_client import CONF_DIR
+        import os, json as _json
+        if not self._queue:
+            return
+        try:
+            os.makedirs(CONF_DIR, exist_ok=True)
+            path = os.path.join(CONF_DIR, "queue.json")
+            data = {
+                "track_ids": [getattr(t, "id", None) for t in self._queue],
+                "current_idx": self._current_idx,
+            }
+            with open(path, "w") as f:
+                _json.dump(data, f)
+        except Exception:
+            pass
+
+    @work(thread=True)
+    def _restore_queue(self) -> None:
+        from lowtide.tidal_client import CONF_DIR
+        import os, json as _json
+        path = os.path.join(CONF_DIR, "queue.json")
+        try:
+            with open(path) as f:
+                data = _json.load(f)
+            track_ids = [i for i in data.get("track_ids", []) if i is not None]
+            if not track_ids:
+                return
+            tracks = []
+            for tid in track_ids:
+                try:
+                    tracks.append(self.client.session.track(tid))
+                except Exception:
+                    pass
+            if not tracks:
+                return
+            saved_idx = data.get("current_idx", 0)
+            self.call_from_thread(self._apply_restored_queue, tracks, saved_idx)
+        except Exception:
+            pass
+
+    def _apply_restored_queue(self, tracks: list, current_idx: int) -> None:
+        self._queue = tracks
+        self._current_idx = current_idx
+        self.query_one(QueuePanel).refresh_queue(tracks, current_idx)
+        if 0 <= current_idx < len(tracks):
+            self._set_current_track(tracks[current_idx])
+        self.notify(f"Restored queue ({len(tracks)} tracks)", timeout=3)
+
     async def on_unmount(self) -> None:
+        self._save_queue()
+        await self.mpris.stop()
         await self.player.shutdown()

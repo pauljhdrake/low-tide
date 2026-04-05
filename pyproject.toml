@@ -14,6 +14,7 @@ dependencies = [
     "textual>=8.0.0",
     "textual-image>=0.8.5",
     "Pillow>=11.0.0",
+    "dbus-next>=0.2.3",
 ]
 
 [project.scripts]

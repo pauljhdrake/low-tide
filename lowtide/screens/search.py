@@ -76,7 +76,7 @@ class SearchScreen(Widget):
         lv_albums.clear()
         for album in albums:
             name = getattr(album, "name", "?")
-            artist = getattr(getattr(album, "artist", None), "name", "—")
+            artist = getattr(getattr(album, "artist", None), "name", "–")
             year = getattr(album, "year", "")
             n = getattr(album, "num_tracks", getattr(album, "numberOfTracks", ""))
             label = f"{name}  [dim]{artist}  •  {year}  •  {n} tracks[/dim]"

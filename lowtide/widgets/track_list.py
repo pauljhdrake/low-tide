@@ -54,8 +54,8 @@ class TrackList(Widget):
     def _fill(self, table: DataTable) -> None:
         for i, t in enumerate(self._tracks):
             name = getattr(t, "name", "?")
-            artist = getattr(getattr(t, "artist", None), "name", "—")
-            album = getattr(getattr(t, "album", None), "name", "—")
+            artist = getattr(getattr(t, "artist", None), "name", "–")
+            album = getattr(getattr(t, "album", None), "name", "–")
             dur = int(getattr(t, "duration", 0))
             m, s = divmod(dur, 60)
             table.add_row(str(i + 1), name, artist, album, f"{m}:{s:02d}", key=str(i))

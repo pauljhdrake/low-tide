@@ -27,13 +27,20 @@ class TidalClient:
         self.session = tidalapi.Session(tidalapi.Config(quality=quality))
         self._try_load_tokens()
 
-    def _load_quality(self) -> str:
+    def _load_config(self) -> dict:
         try:
             with open(CONFIG_PATH) as f:
-                data = json.load(f)
-            return _QUALITY_MAP.get(data.get("quality", "lossless"), Quality.high_lossless)
+                return json.load(f)
         except Exception:
-            return Quality.high_lossless
+            return {}
+
+    def _load_quality(self) -> str:
+        data = self._load_config()
+        return _QUALITY_MAP.get(data.get("quality", "lossless"), Quality.high_lossless)
+
+    @property
+    def config(self) -> dict:
+        return self._load_config()
 
     def _try_load_tokens(self) -> None:
         try:
