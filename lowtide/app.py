@@ -550,12 +550,8 @@ class LowTideApp(App):
             pass
 
     def _apply_restored_queue(self, tracks: list, current_idx: int) -> None:
-        self._queue = tracks
-        self._current_idx = current_idx
-        self.query_one(QueuePanel).refresh_queue(tracks, current_idx)
-        if 0 <= current_idx < len(tracks):
-            self._set_current_track(tracks[current_idx])
         self.notify(f"Restored queue ({len(tracks)} tracks)", timeout=3)
+        self.enqueue_and_play(tracks, start_index=current_idx)
 
     async def on_unmount(self) -> None:
         self._save_queue()
