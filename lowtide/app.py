@@ -10,8 +10,10 @@ from textual.containers import Horizontal
 from textual.widget import Widget
 from textual.widgets import Label, ListItem, ListView
 
+from lowtide.lyrics import parse_lrc
 from lowtide.mpris import MPRISService
 from lowtide.player import Player
+from lowtide.scrobbler import Scrobbler
 from lowtide.screens.library import LibraryScreen
 from lowtide.screens.search import SearchScreen
 from lowtide.tidal_client import TidalClient
@@ -197,6 +199,7 @@ class LowTideApp(App):
         Binding("[", "volume_down", "Vol-", show=False),
         Binding("s", "toggle_shuffle", "Shuffle"),
         Binding("r", "toggle_repeat", "Repeat"),
+        Binding("x", "toggle_crossfade", "Crossfade"),
         Binding("l", "toggle_favourite", "Love"),
         Binding("q", "toggle_queue", "Queue"),
         Binding("escape", "go_back", "Back", show=False),
@@ -208,13 +211,17 @@ class LowTideApp(App):
     def __init__(self, client: TidalClient):
         super().__init__()
         self.client = client
-        self.player = Player(config=client.config)
+        cfg = client.config
+        self.player = Player(config=cfg)
         self.mpris = MPRISService(self)
+        self.scrobbler = Scrobbler(cfg)
         self._queue: list = []
         self._current_idx: int = -1
         self._queue_gen: int = 0  # incremented on each new enqueue to cancel stale workers
         self._current_track = None
         self._current_favourited: bool = False
+        self._target_volume: int = 80
+        self._crossfading: bool = False
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="main"):
@@ -230,6 +237,9 @@ class LowTideApp(App):
             self.notify(str(e), severity="error", timeout=10)
             return
         await self.mpris.start()
+        self._target_volume = self.player.volume
+        if self.player.crossfade_secs > 0:
+            self.query_one(NowPlayingBar).crossfade = True
         self.player.on_track_start.append(self._on_mpv_track_start)
         self.set_interval(1.0, self._poll_player)
         self._restore_queue()
@@ -239,26 +249,46 @@ class LowTideApp(App):
     async def _poll_player(self) -> None:
         bar = self.query_one(NowPlayingBar)
         position = await self.player.get_position()
+        duration = await self.player.get_duration()
         paused = await self.player.get_paused()
         bar.position = position
-        bar.duration = await self.player.get_duration()
+        bar.duration = duration
         bar.paused = paused
-        bar.volume = self.player.volume
+        bar.volume = self._target_volume
         self.mpris.update_position(position)
         self.mpris.update_playback_status(paused)
+        self.scrobbler.update(position, duration)
+
+        # Crossfade: fade out as current track approaches its end
+        if self.player.crossfade_secs > 0 and duration > 0 and not paused:
+            remaining = duration - position
+            if 0 < remaining <= self.player.crossfade_secs:
+                fade_vol = max(0, int((remaining / self.player.crossfade_secs) * self._target_volume))
+                await self.player._cmd(["set_property", "volume", fade_vol])
+                self._crossfading = True
 
     async def _on_mpv_track_start(self) -> None:
+        # Restore volume after a crossfade fade-out
+        if self._crossfading:
+            self._crossfading = False
+            await self.player.set_volume(self._target_volume)
+
         pos = await self.player.get_playlist_pos()
         if 0 <= pos < len(self._queue):
             self._current_idx = pos
-            self._set_current_track(self._queue[pos])
+            track = self._queue[pos]
+            self._set_current_track(track)
             self.query_one(QueuePanel).refresh_queue(self._queue, self._current_idx)
+            self.scrobbler.track_started(track)
+            self._load_track_extras(track)
 
     def _set_current_track(self, track) -> None:
         self._current_track = track
         self._current_favourited = False
         bar = self.query_one(NowPlayingBar)
         bar.set_track(track)
+        bar.set_lyrics([])   # clear until loaded
+        bar.track_info = ""
         bar.favourited = False
         try:
             art_url = track.album.image(320)
@@ -266,6 +296,19 @@ class LowTideApp(App):
             art_url = None
         self.query_one(Sidebar).update_art(art_url)
         self.mpris.update_track(track)
+
+    @work(thread=True)
+    def _load_track_extras(self, track) -> None:
+        """Fetch lyrics and track info in the background."""
+        info = self.client.get_track_info(track)
+        _, lrc = self.client.get_lyrics(track)
+        lines = parse_lrc(lrc) if lrc else []
+        self.call_from_thread(self._apply_track_extras, info, lines)
+
+    def _apply_track_extras(self, info: dict, lines: list) -> None:
+        bar = self.query_one(NowPlayingBar)
+        bar.set_track_info(info)
+        bar.set_lyrics(lines)
 
     # --- Public: enqueue & play ---
 
@@ -394,6 +437,18 @@ class LowTideApp(App):
 
     # --- Playback actions ---
 
+    async def action_toggle_crossfade(self) -> None:
+        if self.player.crossfade_secs > 0:
+            self.player.crossfade_secs = 0
+            self.query_one(NowPlayingBar).crossfade = False
+            self.notify("Crossfade off")
+        else:
+            cfg = self.client.config
+            secs = int(cfg.get("crossfade", 5))
+            self.player.crossfade_secs = max(1, secs)
+            self.query_one(NowPlayingBar).crossfade = True
+            self.notify(f"Crossfade {self.player.crossfade_secs}s")
+
     async def action_toggle_shuffle(self) -> None:
         self.player.shuffle = not self.player.shuffle
         self.query_one(NowPlayingBar).shuffle = self.player.shuffle
@@ -440,12 +495,14 @@ class LowTideApp(App):
         await self.player.prev()
 
     async def action_volume_up(self) -> None:
-        await self.player.set_volume(self.player.volume + 5)
-        self.mpris.update_volume(self.player.volume)
+        self._target_volume = min(100, self._target_volume + 5)
+        await self.player.set_volume(self._target_volume)
+        self.mpris.update_volume(self._target_volume)
 
     async def action_volume_down(self) -> None:
-        await self.player.set_volume(self.player.volume - 5)
-        self.mpris.update_volume(self.player.volume)
+        self._target_volume = max(0, self._target_volume - 5)
+        await self.player.set_volume(self._target_volume)
+        self.mpris.update_volume(self._target_volume)
 
     async def action_toggle_queue(self) -> None:
         panel = self.query_one(QueuePanel)

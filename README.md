@@ -103,6 +103,7 @@ The source code for token handling is in [`lowtide/tidal_client.py`](lowtide/tid
 | `s` | Toggle shuffle |
 | `r` | Toggle repeat |
 | `l` | Love / unlove current track |
+| `x` | Toggle crossfade |
 | `a` | Add focused track to queue |
 | `A` | Add all tracks in current view to queue |
 | `q` | Toggle queue panel |
@@ -138,6 +139,19 @@ Create `~/.config/low-tide/config.json` to override defaults:
 | `alsa_device` | string | system default | ALSA device name, e.g. `"hw:0,0"`. |
 | `alsa_bit_depth` | `16` `24` `32` | `32` | Output bit depth when using ALSA. |
 | `alsa_samplerate` | integer | source rate | Output sample rate when using ALSA, e.g. `192000`. |
+
+To enable Last.fm scrobbling, add a `lastfm` block. Get an API key at [last.fm/api](https://www.last.fm/api/account/create). `password_hash` is the MD5 hash of your password — generate it with `python3 -c "import hashlib; print(hashlib.md5('yourpassword'.encode()).hexdigest())"`.
+
+```json
+{
+  "lastfm": {
+    "api_key": "your_api_key",
+    "api_secret": "your_api_secret",
+    "username": "your_username",
+    "password_hash": "md5_of_your_password"
+  }
+}
+```
 
 Example for bit-perfect TIDAL MAX output:
 

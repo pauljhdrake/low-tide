@@ -44,7 +44,9 @@ def _build_mpv_args(config: dict) -> list[str]:
 
 class Player:
     def __init__(self, config: dict | None = None):
-        self._mpv_args = _build_mpv_args(config or {})
+        cfg = config or {}
+        self._mpv_args = _build_mpv_args(cfg)
+        self.crossfade_secs: int = int(cfg.get("crossfade", 0))
         self._process: Optional[asyncio.subprocess.Process] = None
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None

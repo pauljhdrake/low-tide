@@ -115,6 +115,23 @@ class TidalClient:
         except Exception:
             return None
 
+    def get_lyrics(self, track) -> tuple[str, str]:
+        """Returns (plain_text, lrc_subtitles). Either may be empty string."""
+        try:
+            lyr = track.lyrics()
+            return lyr.text or "", lyr.subtitles or ""
+        except Exception:
+            return "", ""
+
+    def get_track_info(self, track) -> dict:
+        """Returns extended track metadata for display."""
+        return {
+            "bpm": getattr(track, "bpm", None),
+            "explicit": getattr(track, "explicit", False),
+            "audio_quality": getattr(track, "audio_quality", None),
+            "isrc": getattr(track, "isrc", None),
+        }
+
     def add_favourite_track(self, track_id: int) -> bool:
         try:
             return self.session.user.favorites.add_track(track_id)
