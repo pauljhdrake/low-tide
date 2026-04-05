@@ -72,6 +72,24 @@ low-tide
 
 On first launch you will be prompted to authenticate with TIDAL via a device-code login — a URL is printed, open it in your browser and follow the prompts. Tokens are saved to `~/.config/low-tide/session.json` and reused on future launches.
 
+## Authentication and Token Handling
+
+low-tide uses TIDAL's OAuth 2.0 device-code flow. Your TIDAL password is never seen or stored by this app — you authenticate directly with TIDAL in your browser.
+
+After login, TIDAL issues an access token and a refresh token. These are stored **locally on your machine** at:
+
+```
+~/.config/low-tide/session.json
+```
+
+This file:
+- is never read by anything other than low-tide on your machine
+- is excluded from the repository via `.gitignore` and will never be committed
+- contains no password — only the OAuth tokens issued by TIDAL
+- can be revoked at any time by contacting TIDAL support or deleting the file (you will be prompted to re-authenticate on next launch)
+
+The source code for token handling is in [`lowtide/tidal_client.py`](lowtide/tidal_client.py) if you want to inspect it.
+
 ## Keybindings
 
 | Key | Action |
