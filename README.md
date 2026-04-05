@@ -13,13 +13,36 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 
 ## Features
 
+### Playback
+- Full audio playback via `mpv` – no browser, no Electron
+- Shuffle, repeat, and crossfade (with configurable fade duration)
+- ReplayGain normalisation – album or track mode via mpv
+- ALSA direct output for bit-perfect playback (optional, see [Configuration](#configuration))
+- Stream quality from 96 kbps AAC up to Hi-Res Lossless (TIDAL MAX)
+
+### Library and browsing
 - Browse playlists, favourites, mixes, and TIDAL's For You recommendations
 - Search tracks, albums, and artists
-- Full audio playback via `mpv` – no browser, no Electron
-- Album art rendered inline using the kitty graphics protocol
-- Queue management with keyboard navigation
 - Album and artist drill-down views
+- Love / unlove tracks – syncs with TIDAL favourites
+
+### Queue
+- Add individual tracks or entire views to the queue without replacing it
+- Queue persists across restarts – picks up where you left off
+
+### Now playing
+- Synced lyrics displayed in the player bar, scrolling in time with playback
+- Track info – BPM, audio quality, and explicit flag
+- Album art rendered inline using the kitty graphics protocol
+
+### Integrations
+- **MPRIS2** – media keys, `playerctl`, and desktop now-playing panels
+- **Last.fm scrobbling** – configured via `config.json` (see [Configuration](#configuration))
+
+### Interface
 - Transparent UI designed for GPU-accelerated terminals
+- Queue panel toggle
+- Keyboard-first with mouse click support for track selection
 
 ## Requirements
 
@@ -38,9 +61,6 @@ sudo pacman -S mpv
 
 # Ubuntu / Debian
 sudo apt install mpv
-
-# macOS
-brew install mpv
 ```
 
 ## Installation
