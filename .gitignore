@@ -16,3 +16,7 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# TIDAL session tokens — never commit credentials
+-/
+~/.config/low-tide/
