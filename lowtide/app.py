@@ -10,7 +10,10 @@ from textual.containers import Horizontal
 from textual.widget import Widget
 from textual.widgets import Label, ListItem, ListView
 
+from lowtide.lyrics import parse_lrc
+from lowtide.mpris import MPRISService
 from lowtide.player import Player
+from lowtide.scrobbler import Scrobbler
 from lowtide.screens.library import LibraryScreen
 from lowtide.screens.search import SearchScreen
 from lowtide.tidal_client import TidalClient
@@ -159,7 +162,7 @@ class QueuePanel(Widget):
         lv.clear()
         for i, t in enumerate(tracks):
             name = getattr(t, "name", "?")
-            artist = getattr(getattr(t, "artist", None), "name", "—")
+            artist = getattr(getattr(t, "artist", None), "name", "–")
             marker = "▶ " if i == current_idx else "  "
             item = ListItem(Label(f"{marker}[b]{name}[/b]\n[dim]{artist}[/dim]"))
             item._queue_index = i
@@ -194,19 +197,31 @@ class LowTideApp(App):
         Binding("p", "prev_track", "Prev"),
         Binding("]", "volume_up", "Vol+", show=False),
         Binding("[", "volume_down", "Vol-", show=False),
+        Binding("s", "toggle_shuffle", "Shuffle"),
+        Binding("r", "toggle_repeat", "Repeat"),
+        Binding("x", "toggle_crossfade", "Crossfade"),
+        Binding("l", "toggle_favourite", "Love"),
         Binding("q", "toggle_queue", "Queue"),
         Binding("escape", "go_back", "Back", show=False),
         Binding("ctrl+s", "focus_search", "Search"),
         Binding("ctrl+l", "focus_library", "Library"),
+        Binding("ctrl+q", "quit", "Quit"),
     ]
 
     def __init__(self, client: TidalClient):
         super().__init__()
         self.client = client
-        self.player = Player()
+        cfg = client.config
+        self.player = Player(config=cfg)
+        self.mpris = MPRISService(self)
+        self.scrobbler = Scrobbler(cfg)
         self._queue: list = []
         self._current_idx: int = -1
         self._queue_gen: int = 0  # incremented on each new enqueue to cancel stale workers
+        self._current_track = None
+        self._current_favourited: bool = False
+        self._target_volume: int = 80
+        self._crossfading: bool = False
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="main"):
@@ -221,32 +236,79 @@ class LowTideApp(App):
         except RuntimeError as e:
             self.notify(str(e), severity="error", timeout=10)
             return
+        await self.mpris.start()
+        self._target_volume = self.player.volume
+        if self.player.crossfade_secs > 0:
+            self.query_one(NowPlayingBar).crossfade = True
         self.player.on_track_start.append(self._on_mpv_track_start)
         self.set_interval(1.0, self._poll_player)
+        self._restore_queue()
 
     # --- Player polling ---
 
     async def _poll_player(self) -> None:
         bar = self.query_one(NowPlayingBar)
-        bar.position = await self.player.get_position()
-        bar.duration = await self.player.get_duration()
-        bar.paused = await self.player.get_paused()
-        bar.volume = self.player.volume
+        position = await self.player.get_position()
+        duration = await self.player.get_duration()
+        paused = await self.player.get_paused()
+        bar.position = position
+        bar.duration = duration
+        bar.paused = paused
+        bar.volume = self._target_volume
+        self.mpris.update_position(position)
+        self.mpris.update_playback_status(paused)
+        self.scrobbler.update(position, duration)
+
+        # Crossfade: fade out as current track approaches its end
+        if self.player.crossfade_secs > 0 and duration > 0 and not paused:
+            remaining = duration - position
+            if 0 < remaining <= self.player.crossfade_secs:
+                fade_vol = max(0, int((remaining / self.player.crossfade_secs) * self._target_volume))
+                await self.player._cmd(["set_property", "volume", fade_vol])
+                self._crossfading = True
 
     async def _on_mpv_track_start(self) -> None:
+        # Restore volume after a crossfade fade-out
+        if self._crossfading:
+            self._crossfading = False
+            await self.player.set_volume(self._target_volume)
+
         pos = await self.player.get_playlist_pos()
         if 0 <= pos < len(self._queue):
             self._current_idx = pos
-            self._set_current_track(self._queue[pos])
+            track = self._queue[pos]
+            self._set_current_track(track)
             self.query_one(QueuePanel).refresh_queue(self._queue, self._current_idx)
+            self.scrobbler.track_started(track)
+            self._load_track_extras(track)
 
     def _set_current_track(self, track) -> None:
-        self.query_one(NowPlayingBar).set_track(track)
+        self._current_track = track
+        self._current_favourited = False
+        bar = self.query_one(NowPlayingBar)
+        bar.set_track(track)
+        bar.set_lyrics([])   # clear until loaded
+        bar.track_info = ""
+        bar.favourited = False
         try:
             art_url = track.album.image(320)
         except Exception:
             art_url = None
         self.query_one(Sidebar).update_art(art_url)
+        self.mpris.update_track(track)
+
+    @work(thread=True)
+    def _load_track_extras(self, track) -> None:
+        """Fetch lyrics and track info in the background."""
+        info = self.client.get_track_info(track)
+        _, lrc = self.client.get_lyrics(track)
+        lines = parse_lrc(lrc) if lrc else []
+        self.call_from_thread(self._apply_track_extras, info, lines)
+
+    def _apply_track_extras(self, info: dict, lines: list) -> None:
+        bar = self.query_one(NowPlayingBar)
+        bar.set_track_info(info)
+        bar.set_lyrics(lines)
 
     # --- Public: enqueue & play ---
 
@@ -254,16 +316,34 @@ class LowTideApp(App):
         # Rotate so the selected track is at position 0, matching mpv's playlist order.
         # self._queue[N] will always equal mpv playlist position N.
         rotated = tracks[start_index:] + tracks[:start_index]
+        if self.player.shuffle:
+            import random
+            first = rotated[:1]
+            rest = rotated[1:]
+            random.shuffle(rest)
+            rotated = first + rest
         self._queue = rotated
         self._current_idx = 0
         self._queue_gen += 1
         self._load_queue(rotated, self._queue_gen)
 
+    def append_to_queue(self, tracks: list) -> None:
+        if not self._queue:
+            # Nothing playing yet – just start playback
+            self.enqueue_and_play(tracks)
+            return
+        self._queue.extend(tracks)
+        self.query_one(QueuePanel).refresh_queue(self._queue, self._current_idx)
+        self._append_tracks(tracks, self._queue_gen)
+        count = len(tracks)
+        label = tracks[0].name if count == 1 else f"{count} tracks"
+        self.notify(f"Added {label} to queue")
+
     @work(thread=True)
     def _load_queue(self, tracks: list, gen: int) -> None:
         for i, track in enumerate(tracks):
             if self._queue_gen != gen:
-                return  # a newer enqueue_and_play was called — abort
+                return  # a newer enqueue_and_play was called – abort
             url = self.client.get_track_url(track)
             if not url or self._queue_gen != gen:
                 continue
@@ -280,6 +360,20 @@ class LowTideApp(App):
             self.call_from_thread(
                 lambda: self.query_one(QueuePanel).refresh_queue(self._queue, self._current_idx)
             )
+
+    @work(thread=True)
+    def _append_tracks(self, tracks: list, gen: int) -> None:
+        for track in tracks:
+            if self._queue_gen != gen:
+                return
+            url = self.client.get_track_url(track)
+            if url and self._queue_gen == gen:
+                self.call_from_thread(
+                    lambda u=url: asyncio.ensure_future(self.player.append(u))
+                )
+
+    def on_track_list_track_append_requested(self, event) -> None:
+        self.append_to_queue([event.track])
 
     async def jump_to_queue_index(self, idx: int) -> None:
         """Skip playback to a specific queue position."""
@@ -343,6 +437,54 @@ class LowTideApp(App):
 
     # --- Playback actions ---
 
+    async def action_toggle_crossfade(self) -> None:
+        if self.player.crossfade_secs > 0:
+            self.player.crossfade_secs = 0
+            self.query_one(NowPlayingBar).crossfade = False
+            self.notify("Crossfade off")
+        else:
+            cfg = self.client.config
+            secs = int(cfg.get("crossfade", 5))
+            self.player.crossfade_secs = max(1, secs)
+            self.query_one(NowPlayingBar).crossfade = True
+            self.notify(f"Crossfade {self.player.crossfade_secs}s")
+
+    async def action_toggle_shuffle(self) -> None:
+        self.player.shuffle = not self.player.shuffle
+        self.query_one(NowPlayingBar).shuffle = self.player.shuffle
+        self.mpris.update_shuffle(self.player.shuffle)
+        state = "on" if self.player.shuffle else "off"
+        self.notify(f"Shuffle {state}")
+
+    async def action_toggle_repeat(self) -> None:
+        await self.player.toggle_repeat()
+        self.query_one(NowPlayingBar).repeat = self.player.repeat
+        self.mpris.update_loop_status(self.player.repeat)
+        state = "on" if self.player.repeat else "off"
+        self.notify(f"Repeat {state}")
+
+    @work(thread=True)
+    def action_toggle_favourite(self) -> None:
+        if self._current_track is None:
+            return
+        track_id = getattr(self._current_track, "id", None)
+        if track_id is None:
+            return
+        if self._current_favourited:
+            ok = self.client.remove_favourite_track(track_id)
+            if ok:
+                self._current_favourited = False
+                self.call_from_thread(self._apply_favourite_state, False, "Removed from favourites")
+        else:
+            ok = self.client.add_favourite_track(track_id)
+            if ok:
+                self._current_favourited = True
+                self.call_from_thread(self._apply_favourite_state, True, "Added to favourites")
+
+    def _apply_favourite_state(self, state: bool, message: str) -> None:
+        self.query_one(NowPlayingBar).favourited = state
+        self.notify(message)
+
     async def action_toggle_pause(self) -> None:
         await self.player.toggle_pause()
 
@@ -353,14 +495,65 @@ class LowTideApp(App):
         await self.player.prev()
 
     async def action_volume_up(self) -> None:
-        await self.player.set_volume(self.player.volume + 5)
+        self._target_volume = min(100, self._target_volume + 5)
+        await self.player.set_volume(self._target_volume)
+        self.mpris.update_volume(self._target_volume)
 
     async def action_volume_down(self) -> None:
-        await self.player.set_volume(self.player.volume - 5)
+        self._target_volume = max(0, self._target_volume - 5)
+        await self.player.set_volume(self._target_volume)
+        self.mpris.update_volume(self._target_volume)
 
     async def action_toggle_queue(self) -> None:
         panel = self.query_one(QueuePanel)
         panel.display = not panel.display
 
+    def _save_queue(self) -> None:
+        from lowtide.tidal_client import CONF_DIR
+        import os, json as _json
+        if not self._queue:
+            return
+        try:
+            os.makedirs(CONF_DIR, exist_ok=True)
+            path = os.path.join(CONF_DIR, "queue.json")
+            data = {
+                "track_ids": [getattr(t, "id", None) for t in self._queue],
+                "current_idx": self._current_idx,
+            }
+            with open(path, "w") as f:
+                _json.dump(data, f)
+        except Exception:
+            pass
+
+    @work(thread=True)
+    def _restore_queue(self) -> None:
+        from lowtide.tidal_client import CONF_DIR
+        import os, json as _json
+        path = os.path.join(CONF_DIR, "queue.json")
+        try:
+            with open(path) as f:
+                data = _json.load(f)
+            track_ids = [i for i in data.get("track_ids", []) if i is not None]
+            if not track_ids:
+                return
+            tracks = []
+            for tid in track_ids:
+                try:
+                    tracks.append(self.client.session.track(tid))
+                except Exception:
+                    pass
+            if not tracks:
+                return
+            saved_idx = data.get("current_idx", 0)
+            self.call_from_thread(self._apply_restored_queue, tracks, saved_idx)
+        except Exception:
+            pass
+
+    def _apply_restored_queue(self, tracks: list, current_idx: int) -> None:
+        self.notify(f"Restored queue ({len(tracks)} tracks)", timeout=3)
+        self.enqueue_and_play(tracks, start_index=current_idx)
+
     async def on_unmount(self) -> None:
+        self._save_queue()
+        await self.mpris.stop()
         await self.player.shutdown()

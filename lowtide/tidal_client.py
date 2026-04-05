@@ -6,15 +6,41 @@ import os
 from typing import Optional
 
 import tidalapi
+from tidalapi.media import Quality
 
 CONF_DIR = os.path.join(os.path.expanduser("~"), ".config", "low-tide")
 CONF_PATH = os.path.join(CONF_DIR, "session.json")
+CONFIG_PATH = os.path.join(CONF_DIR, "config.json")
+
+_QUALITY_MAP = {
+    "low": Quality.low_96k,
+    "high": Quality.low_320k,
+    "lossless": Quality.high_lossless,
+    "hi_res": Quality.hi_res_lossless,
+    "max": Quality.hi_res_lossless,
+}
 
 
 class TidalClient:
     def __init__(self):
-        self.session = tidalapi.Session()
+        quality = self._load_quality()
+        self.session = tidalapi.Session(tidalapi.Config(quality=quality))
         self._try_load_tokens()
+
+    def _load_config(self) -> dict:
+        try:
+            with open(CONFIG_PATH) as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _load_quality(self) -> str:
+        data = self._load_config()
+        return _QUALITY_MAP.get(data.get("quality", "lossless"), Quality.high_lossless)
+
+    @property
+    def config(self) -> dict:
+        return self._load_config()
 
     def _try_load_tokens(self) -> None:
         try:
@@ -88,3 +114,32 @@ class TidalClient:
             return track.get_url()
         except Exception:
             return None
+
+    def get_lyrics(self, track) -> tuple[str, str]:
+        """Returns (plain_text, lrc_subtitles). Either may be empty string."""
+        try:
+            lyr = track.lyrics()
+            return lyr.text or "", lyr.subtitles or ""
+        except Exception:
+            return "", ""
+
+    def get_track_info(self, track) -> dict:
+        """Returns extended track metadata for display."""
+        return {
+            "bpm": getattr(track, "bpm", None),
+            "explicit": getattr(track, "explicit", False),
+            "audio_quality": getattr(track, "audio_quality", None),
+            "isrc": getattr(track, "isrc", None),
+        }
+
+    def add_favourite_track(self, track_id: int) -> bool:
+        try:
+            return self.session.user.favorites.add_track(track_id)
+        except Exception:
+            return False
+
+    def remove_favourite_track(self, track_id: int) -> bool:
+        try:
+            return self.session.user.favorites.remove_track(str(track_id))
+        except Exception:
+            return False

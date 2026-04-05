@@ -8,7 +8,9 @@ from typing import Callable, Optional
 
 SOCKET_PATH = "/tmp/lowtide-mpv.sock"
 
-MPV_ARGS = [
+_REPLAYGAIN_MODES = {"track", "album", "no"}
+
+MPV_BASE_ARGS = [
     "mpv",
     "--no-video",
     "--idle=yes",
@@ -18,8 +20,33 @@ MPV_ARGS = [
 ]
 
 
+def _build_mpv_args(config: dict) -> list[str]:
+    args = list(MPV_BASE_ARGS)
+
+    rg = config.get("replaygain", "album")
+    if rg not in _REPLAYGAIN_MODES:
+        rg = "album"
+    args.append(f"--replaygain={rg}")
+    args.append("--replaygain-clip=yes")
+
+    if config.get("alsa_output"):
+        args.append("--ao=alsa")
+        if bit_depth := config.get("alsa_bit_depth"):
+            fmt = {16: "s16", 24: "s24", 32: "s32"}.get(int(bit_depth), "s32")
+            args.append(f"--audio-format={fmt}")
+        if samplerate := config.get("alsa_samplerate"):
+            args.append(f"--audio-samplerate={int(samplerate)}")
+        if device := config.get("alsa_device"):
+            args.append(f"--audio-device=alsa/{device}")
+
+    return args
+
+
 class Player:
-    def __init__(self):
+    def __init__(self, config: dict | None = None):
+        cfg = config or {}
+        self._mpv_args = _build_mpv_args(cfg)
+        self.crossfade_secs: int = int(cfg.get("crossfade", 0))
         self._process: Optional[asyncio.subprocess.Process] = None
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
@@ -27,6 +54,8 @@ class Player:
         self._pending: dict[int, asyncio.Future] = {}
         self._read_task: Optional[asyncio.Task] = None
         self.volume: int = 80
+        self.shuffle: bool = False
+        self.repeat: bool = False
 
         # Callbacks fired on mpv events
         self.on_track_start: list[Callable] = []
@@ -37,7 +66,7 @@ class Player:
             os.unlink(SOCKET_PATH)
 
         self._process = await asyncio.create_subprocess_exec(
-            *MPV_ARGS,
+            *self._mpv_args,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -47,7 +76,7 @@ class Player:
                 break
             await asyncio.sleep(0.1)
         else:
-            raise RuntimeError("mpv IPC socket did not appear — is mpv installed?")
+            raise RuntimeError("mpv IPC socket did not appear – is mpv installed?")
 
         self._reader, self._writer = await asyncio.open_unix_connection(SOCKET_PATH)
         self._read_task = asyncio.create_task(self._read_loop())
@@ -118,6 +147,11 @@ class Player:
 
     async def stop(self) -> None:
         await self._cmd(["stop"])
+
+    async def toggle_repeat(self) -> None:
+        self.repeat = not self.repeat
+        value = "inf" if self.repeat else "no"
+        await self._cmd(["set_property", "loop-playlist", value])
 
     # --- Volume ---
 

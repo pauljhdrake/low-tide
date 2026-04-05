@@ -76,7 +76,7 @@ class SearchScreen(Widget):
         lv_albums.clear()
         for album in albums:
             name = getattr(album, "name", "?")
-            artist = getattr(getattr(album, "artist", None), "name", "—")
+            artist = getattr(getattr(album, "artist", None), "name", "–")
             year = getattr(album, "year", "")
             n = getattr(album, "num_tracks", getattr(album, "numberOfTracks", ""))
             label = f"{name}  [dim]{artist}  •  {year}  •  {n} tracks[/dim]"
@@ -95,6 +95,9 @@ class SearchScreen(Widget):
 
     def on_track_list_track_selected(self, event: TrackList.TrackSelected) -> None:
         self.app.enqueue_and_play(self.query_one(TrackList).tracks, start_index=event.index)
+
+    def on_track_list_track_append_requested(self, event: TrackList.TrackAppendRequested) -> None:
+        self.app.append_to_queue([event.track])
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         album = getattr(event.item, "_album", None)
