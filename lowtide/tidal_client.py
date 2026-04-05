@@ -6,15 +6,33 @@ import os
 from typing import Optional
 
 import tidalapi
+from tidalapi.media import Quality
 
 CONF_DIR = os.path.join(os.path.expanduser("~"), ".config", "low-tide")
 CONF_PATH = os.path.join(CONF_DIR, "session.json")
+CONFIG_PATH = os.path.join(CONF_DIR, "config.json")
+
+_QUALITY_MAP = {
+    "low": Quality.low_96k,
+    "high": Quality.low_320k,
+    "lossless": Quality.high_lossless,
+    "hi_res": Quality.hi_res_lossless,
+}
 
 
 class TidalClient:
     def __init__(self):
-        self.session = tidalapi.Session()
+        quality = self._load_quality()
+        self.session = tidalapi.Session(tidalapi.Config(quality=quality))
         self._try_load_tokens()
+
+    def _load_quality(self) -> str:
+        try:
+            with open(CONFIG_PATH) as f:
+                data = json.load(f)
+            return _QUALITY_MAP.get(data.get("quality", "lossless"), Quality.high_lossless)
+        except Exception:
+            return Quality.high_lossless
 
     def _try_load_tokens(self) -> None:
         try:
@@ -88,3 +106,15 @@ class TidalClient:
             return track.get_url()
         except Exception:
             return None
+
+    def add_favourite_track(self, track_id: int) -> bool:
+        try:
+            return self.session.user.favorites.add_track(track_id)
+        except Exception:
+            return False
+
+    def remove_favourite_track(self, track_id: int) -> bool:
+        try:
+            return self.session.user.favorites.remove_track(str(track_id))
+        except Exception:
+            return False

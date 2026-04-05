@@ -98,6 +98,11 @@ The source code for token handling is in [`lowtide/tidal_client.py`](lowtide/tid
 | `n` | Next track |
 | `p` | Previous track |
 | `]` / `[` | Volume up / down |
+| `s` | Toggle shuffle |
+| `r` | Toggle repeat |
+| `l` | Love / unlove current track |
+| `a` | Add focused track to queue |
+| `A` | Add all tracks in current view to queue |
 | `q` | Toggle queue panel |
 | `ctrl+s` | Go to Search |
 | `ctrl+l` | Go to Library |

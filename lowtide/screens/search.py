@@ -96,6 +96,9 @@ class SearchScreen(Widget):
     def on_track_list_track_selected(self, event: TrackList.TrackSelected) -> None:
         self.app.enqueue_and_play(self.query_one(TrackList).tracks, start_index=event.index)
 
+    def on_track_list_track_append_requested(self, event: TrackList.TrackAppendRequested) -> None:
+        self.app.append_to_queue([event.track])
+
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         album = getattr(event.item, "_album", None)
         if album:

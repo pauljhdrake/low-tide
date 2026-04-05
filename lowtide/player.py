@@ -27,6 +27,8 @@ class Player:
         self._pending: dict[int, asyncio.Future] = {}
         self._read_task: Optional[asyncio.Task] = None
         self.volume: int = 80
+        self.shuffle: bool = False
+        self.repeat: bool = False
 
         # Callbacks fired on mpv events
         self.on_track_start: list[Callable] = []
@@ -118,6 +120,11 @@ class Player:
 
     async def stop(self) -> None:
         await self._cmd(["stop"])
+
+    async def toggle_repeat(self) -> None:
+        self.repeat = not self.repeat
+        value = "inf" if self.repeat else "no"
+        await self._cmd(["set_property", "loop-playlist", value])
 
     # --- Volume ---
 

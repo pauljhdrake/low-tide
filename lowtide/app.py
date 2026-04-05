@@ -194,10 +194,14 @@ class LowTideApp(App):
         Binding("p", "prev_track", "Prev"),
         Binding("]", "volume_up", "Vol+", show=False),
         Binding("[", "volume_down", "Vol-", show=False),
+        Binding("s", "toggle_shuffle", "Shuffle"),
+        Binding("r", "toggle_repeat", "Repeat"),
+        Binding("l", "toggle_favourite", "Love"),
         Binding("q", "toggle_queue", "Queue"),
         Binding("escape", "go_back", "Back", show=False),
         Binding("ctrl+s", "focus_search", "Search"),
         Binding("ctrl+l", "focus_library", "Library"),
+        Binding("ctrl+q", "quit", "Quit"),
     ]
 
     def __init__(self, client: TidalClient):
@@ -207,6 +211,8 @@ class LowTideApp(App):
         self._queue: list = []
         self._current_idx: int = -1
         self._queue_gen: int = 0  # incremented on each new enqueue to cancel stale workers
+        self._current_track = None
+        self._current_favourited: bool = False
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="main"):
@@ -241,7 +247,11 @@ class LowTideApp(App):
             self.query_one(QueuePanel).refresh_queue(self._queue, self._current_idx)
 
     def _set_current_track(self, track) -> None:
-        self.query_one(NowPlayingBar).set_track(track)
+        self._current_track = track
+        self._current_favourited = False
+        bar = self.query_one(NowPlayingBar)
+        bar.set_track(track)
+        bar.favourited = False
         try:
             art_url = track.album.image(320)
         except Exception:
@@ -254,10 +264,28 @@ class LowTideApp(App):
         # Rotate so the selected track is at position 0, matching mpv's playlist order.
         # self._queue[N] will always equal mpv playlist position N.
         rotated = tracks[start_index:] + tracks[:start_index]
+        if self.player.shuffle:
+            import random
+            first = rotated[:1]
+            rest = rotated[1:]
+            random.shuffle(rest)
+            rotated = first + rest
         self._queue = rotated
         self._current_idx = 0
         self._queue_gen += 1
         self._load_queue(rotated, self._queue_gen)
+
+    def append_to_queue(self, tracks: list) -> None:
+        if not self._queue:
+            # Nothing playing yet — just start playback
+            self.enqueue_and_play(tracks)
+            return
+        self._queue.extend(tracks)
+        self.query_one(QueuePanel).refresh_queue(self._queue, self._current_idx)
+        self._append_tracks(tracks, self._queue_gen)
+        count = len(tracks)
+        label = tracks[0].name if count == 1 else f"{count} tracks"
+        self.notify(f"Added {label} to queue")
 
     @work(thread=True)
     def _load_queue(self, tracks: list, gen: int) -> None:
@@ -280,6 +308,20 @@ class LowTideApp(App):
             self.call_from_thread(
                 lambda: self.query_one(QueuePanel).refresh_queue(self._queue, self._current_idx)
             )
+
+    @work(thread=True)
+    def _append_tracks(self, tracks: list, gen: int) -> None:
+        for track in tracks:
+            if self._queue_gen != gen:
+                return
+            url = self.client.get_track_url(track)
+            if url and self._queue_gen == gen:
+                self.call_from_thread(
+                    lambda u=url: asyncio.ensure_future(self.player.append(u))
+                )
+
+    def on_track_list_track_append_requested(self, event) -> None:
+        self.append_to_queue([event.track])
 
     async def jump_to_queue_index(self, idx: int) -> None:
         """Skip playback to a specific queue position."""
@@ -342,6 +384,40 @@ class LowTideApp(App):
         await self._switch_root(FavoritesScreen(), "favorites")
 
     # --- Playback actions ---
+
+    async def action_toggle_shuffle(self) -> None:
+        self.player.shuffle = not self.player.shuffle
+        self.query_one(NowPlayingBar).shuffle = self.player.shuffle
+        state = "on" if self.player.shuffle else "off"
+        self.notify(f"Shuffle {state}")
+
+    async def action_toggle_repeat(self) -> None:
+        await self.player.toggle_repeat()
+        self.query_one(NowPlayingBar).repeat = self.player.repeat
+        state = "on" if self.player.repeat else "off"
+        self.notify(f"Repeat {state}")
+
+    @work(thread=True)
+    def action_toggle_favourite(self) -> None:
+        if self._current_track is None:
+            return
+        track_id = getattr(self._current_track, "id", None)
+        if track_id is None:
+            return
+        if self._current_favourited:
+            ok = self.client.remove_favourite_track(track_id)
+            if ok:
+                self._current_favourited = False
+                self.call_from_thread(self._apply_favourite_state, False, "Removed from favourites")
+        else:
+            ok = self.client.add_favourite_track(track_id)
+            if ok:
+                self._current_favourited = True
+                self.call_from_thread(self._apply_favourite_state, True, "Added to favourites")
+
+    def _apply_favourite_state(self, state: bool, message: str) -> None:
+        self.query_one(NowPlayingBar).favourited = state
+        self.notify(message)
 
     async def action_toggle_pause(self) -> None:
         await self.player.toggle_pause()

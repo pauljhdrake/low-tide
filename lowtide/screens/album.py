@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from textual import work
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
 from textual.widgets import Label
@@ -11,6 +12,8 @@ from lowtide.widgets.track_list import TrackList
 
 
 class AlbumScreen(Widget):
+    BINDINGS = [Binding("A", "append_all", "Add all to queue", show=False)]
+
     DEFAULT_CSS = """
     AlbumScreen {
         height: 1fr;
@@ -89,3 +92,11 @@ class AlbumScreen(Widget):
 
     def on_track_list_track_selected(self, event: TrackList.TrackSelected) -> None:
         self.app.enqueue_and_play(self.query_one(TrackList).tracks, start_index=event.index)
+
+    def on_track_list_track_append_requested(self, event: TrackList.TrackAppendRequested) -> None:
+        self.app.append_to_queue([event.track])
+
+    def action_append_all(self) -> None:
+        tracks = self.query_one(TrackList).tracks
+        if tracks:
+            self.app.append_to_queue(tracks)

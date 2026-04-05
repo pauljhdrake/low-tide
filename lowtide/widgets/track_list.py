@@ -26,6 +26,12 @@ class TrackList(Widget):
             self.track = track
             self.index = index
 
+    class TrackAppendRequested(Message):
+        def __init__(self, track, index: int) -> None:
+            super().__init__()
+            self.track = track
+            self.index = index
+
     def __init__(self, tracks: Optional[list] = None, **kwargs):
         super().__init__(**kwargs)
         self._tracks: list = tracks or []
@@ -54,11 +60,29 @@ class TrackList(Widget):
             m, s = divmod(dur, 60)
             table.add_row(str(i + 1), name, artist, album, f"{m}:{s:02d}", key=str(i))
 
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        if event.row_key and event.row_key.value is not None:
-            idx = int(str(event.row_key.value))
+    def _row_key_to_index(self, row_key) -> int | None:
+        if row_key and row_key.value is not None:
+            idx = int(str(row_key.value))
             if 0 <= idx < len(self._tracks):
-                self.post_message(self.TrackSelected(self._tracks[idx], idx))
+                return idx
+        return None
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        idx = self._row_key_to_index(event.row_key)
+        if idx is not None:
+            self.post_message(self.TrackSelected(self._tracks[idx], idx))
+
+    def on_data_table_row_clicked(self, event: DataTable.RowClicked) -> None:
+        idx = self._row_key_to_index(event.row_key)
+        if idx is not None:
+            self.post_message(self.TrackSelected(self._tracks[idx], idx))
+
+    def on_key(self, event) -> None:
+        if event.key == "a":
+            idx = self.query_one(DataTable).cursor_row
+            if 0 <= idx < len(self._tracks):
+                event.stop()
+                self.post_message(self.TrackAppendRequested(self._tracks[idx], idx))
 
     @property
     def tracks(self) -> list:

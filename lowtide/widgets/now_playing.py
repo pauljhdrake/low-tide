@@ -53,6 +53,10 @@ class NowPlayingBar(Widget):
         color: $text-muted;
         content-align: right middle;
     }
+    NowPlayingBar #np-modes {
+        width: 10;
+        content-align: right middle;
+    }
     """
 
     track_name: reactive[str] = reactive("")
@@ -61,6 +65,9 @@ class NowPlayingBar(Widget):
     position: reactive[float] = reactive(0.0)
     duration: reactive[float] = reactive(0.0)
     volume: reactive[int] = reactive(80)
+    shuffle: reactive[bool] = reactive(False)
+    repeat: reactive[bool] = reactive(False)
+    favourited: reactive[bool] = reactive(False)
 
     def compose(self) -> ComposeResult:
         yield Label("", id="np-track")
@@ -69,12 +76,14 @@ class NowPlayingBar(Widget):
             yield Label("", id="np-controls")
             yield Label("", id="np-progress")
             yield Label("", id="np-vol")
+            yield Label("", id="np-modes")
 
     def on_mount(self) -> None:
         # Trigger initial render of all reactive values
         self.watch_paused(self.paused)
         self.watch_volume(self.volume)
         self._refresh_progress()
+        self._refresh_modes()
 
     def watch_track_name(self, v: str) -> None:
         self.query_one("#np-track", Label).update(
@@ -87,6 +96,22 @@ class NowPlayingBar(Widget):
     def watch_paused(self, paused: bool) -> None:
         icon = "▶" if paused else "⏸"
         self.query_one("#np-controls", Label).update(f"[b]⏮  {icon}  ⏭[/b]")
+
+    def watch_shuffle(self, _: bool) -> None:
+        self._refresh_modes()
+
+    def watch_repeat(self, _: bool) -> None:
+        self._refresh_modes()
+
+    def watch_favourited(self, _: bool) -> None:
+        self._refresh_modes()
+
+    def _refresh_modes(self) -> None:
+        parts = []
+        parts.append("[b]♥[/b]" if self.favourited else "[dim]♡[/dim]")
+        parts.append("[b]⇄[/b]" if self.shuffle else "[dim]⇄[/dim]")
+        parts.append("[b]↺[/b]" if self.repeat else "[dim]↺[/dim]")
+        self.query_one("#np-modes", Label).update("  ".join(parts))
 
     def watch_position(self, _: float) -> None:
         self._refresh_progress()
