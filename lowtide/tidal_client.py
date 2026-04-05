@@ -17,6 +17,7 @@ _QUALITY_MAP = {
     "high": Quality.low_320k,
     "lossless": Quality.high_lossless,
     "hi_res": Quality.hi_res_lossless,
+    "max": Quality.hi_res_lossless,
 }
 
 

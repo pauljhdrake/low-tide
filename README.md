@@ -118,6 +118,25 @@ low-tide uses transparent backgrounds throughout. For the full effect with your 
 background_opacity 0.85
 ```
 
+## Configuration
+
+Create `~/.config/low-tide/config.json` to override defaults:
+
+```json
+{
+  "quality": "lossless"
+}
+```
+
+| Value | Description |
+|-------|-------------|
+| `"low"` | 96 kbps AAC |
+| `"high"` | 320 kbps AAC |
+| `"lossless"` | 16-bit FLAC (default) |
+| `"max"` | Hi-Res Lossless — TIDAL MAX (24-bit, up to 192 kHz) |
+
+A TIDAL Max subscription is required for `"max"` quality.
+
 ## Known Limitations
 
 - **Unofficial API** — relies on [tidalapi](https://github.com/tamland/python-tidal), which may break when TIDAL updates their backend
