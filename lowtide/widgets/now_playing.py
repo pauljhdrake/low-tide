@@ -67,11 +67,13 @@ class NowPlayingBar(Widget):
         margin-top: 1;
     }
     NowPlayingBar .lyric-line {
+        width: 1fr;
         height: 1;
         color: $text-muted;
         text-align: center;
     }
     NowPlayingBar .lyric-current {
+        width: 1fr;
         height: 1;
         text-style: bold;
         text-align: center;
