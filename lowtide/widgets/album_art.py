@@ -48,9 +48,12 @@ class AlbumArt(Widget):
     @work(thread=True)
     def _fetch(self, url: str) -> None:
         try:
-            resp = requests.get(url, timeout=5)
-            resp.raise_for_status()
-            img = PILImage.open(BytesIO(resp.content)).convert("RGB")
+            if url.startswith("file://"):
+                img = PILImage.open(url[7:]).convert("RGB")
+            else:
+                resp = requests.get(url, timeout=5)
+                resp.raise_for_status()
+                img = PILImage.open(BytesIO(resp.content)).convert("RGB")
             self.app.call_from_thread(self._apply, img, url)
         except Exception:
             pass

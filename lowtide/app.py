@@ -25,7 +25,7 @@ from lowtide.widgets.now_playing import NowPlayingBar
 # Sidebar
 # ---------------------------------------------------------------------------
 
-_NAV = [
+_NAV_BASE = [
     ("library", "Library"),
     ("search", "Search"),
     ("favorites", "Favorites"),
@@ -62,11 +62,15 @@ class Sidebar(Widget):
     }
     """
 
+    def __init__(self, nav: list, **kwargs):
+        super().__init__(**kwargs)
+        self._nav = nav
+
     def compose(self) -> ComposeResult:
         yield AlbumArt(id="sidebar-art")
         yield Label("low-tide", id="app-title")
         with ListView(id="nav"):
-            for key, label in _NAV:
+            for key, label in self._nav:
                 item = ListItem(Label(label))
                 item._nav_key = key
                 yield item
@@ -215,6 +219,18 @@ class LowTideApp(App):
         self.player = Player(config=cfg)
         self.mpris = MPRISService(self)
         self.scrobbler = Scrobbler(cfg)
+
+        # Local library – only if music_dir is configured
+        from lowtide.local_library import LocalLibrary
+        raw = cfg.get("music_dir")
+        if raw:
+            dirs = raw if isinstance(raw, list) else [raw]
+            self._local_library: LocalLibrary | None = LocalLibrary(dirs)
+        else:
+            self._local_library = None
+        self._nav = list(_NAV_BASE)
+        if self._local_library:
+            self._nav.append(("local", "Local"))
         self._queue: list = []
         self._current_idx: int = -1
         self._queue_gen: int = 0  # incremented on each new enqueue to cancel stale workers
@@ -225,7 +241,7 @@ class LowTideApp(App):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="main"):
-            yield Sidebar()
+            yield Sidebar(nav=self._nav)
             yield ContentArea()
             yield QueuePanel()
         yield NowPlayingBar()
@@ -300,9 +316,13 @@ class LowTideApp(App):
     @work(thread=True)
     def _load_track_extras(self, track) -> None:
         """Fetch lyrics and track info in the background."""
+        from lowtide.local_track import LocalTrack
         info = self.client.get_track_info(track)
-        _, lrc = self.client.get_lyrics(track)
-        lines = parse_lrc(lrc) if lrc else []
+        if isinstance(track, LocalTrack):
+            lines = []
+        else:
+            _, lrc = self.client.get_lyrics(track)
+            lines = parse_lrc(lrc) if lrc else []
         self.call_from_thread(self._apply_track_extras, info, lines)
 
     def _apply_track_extras(self, info: dict, lines: list) -> None:
@@ -430,10 +450,17 @@ class LowTideApp(App):
                 await self.action_focus_search()
             elif key == "favorites":
                 await self._open_favorites()
+            elif key == "local":
+                await self._open_local()
 
     async def _open_favorites(self) -> None:
         from lowtide.screens.favorites import FavoritesScreen
         await self._switch_root(FavoritesScreen(), "favorites")
+
+    async def _open_local(self) -> None:
+        from lowtide.screens.local import LocalLibraryScreen
+        if self._local_library:
+            await self._switch_root(LocalLibraryScreen(self._local_library), "local")
 
     # --- Playback actions ---
 
