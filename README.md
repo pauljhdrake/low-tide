@@ -25,6 +25,7 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 - Search tracks, albums, and artists
 - Album and artist drill-down views
 - Love / unlove tracks – syncs with TIDAL favourites
+- Local library – browse and play locally stored files (FLAC, MP3, OPUS, OGG, M4A); metadata read via mutagen, library cached for fast startup
 
 ### Queue
 - Add individual tracks or entire views to the queue without replacing it
@@ -154,6 +155,7 @@ Create `~/.config/low-tide/config.json` to override defaults:
 | Key | Values | Default | Description |
 |-----|--------|---------|-------------|
 | `quality` | `"low"` `"high"` `"lossless"` `"max"` | `"lossless"` | Stream quality. `"max"` requires a TIDAL Max subscription. |
+| `music_dir` | string or array | — | Local music directory or directories. Adds a Local section to the sidebar. e.g. `"/home/user/Music"` or `["/home/user/Music", "/mnt/nas/Music"]` |
 | `replaygain` | `"album"` `"track"` `"no"` | `"album"` | ReplayGain mode. `"album"` preserves intended volume differences between tracks on the same album; `"track"` normalises every track to the same loudness. |
 | `alsa_output` | `true` / `false` | `false` | Route audio directly to ALSA, bypassing PulseAudio/PipeWire. Useful for bit-perfect output. |
 | `alsa_device` | string | system default | ALSA device name, e.g. `"hw:0,0"`. |

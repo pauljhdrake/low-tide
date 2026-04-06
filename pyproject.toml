@@ -16,6 +16,7 @@ dependencies = [
     "Pillow>=11.0.0",
     "dbus-next>=0.2.3",
     "pylast>=5.0.0",
+    "mutagen>=1.47.0",
 ]
 
 [project.scripts]
