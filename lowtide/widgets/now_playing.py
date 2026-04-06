@@ -7,11 +7,13 @@ from textual.widget import Widget
 from textual.widgets import Label
 
 from lowtide.lyrics import LyricLine, current_line_index
+from lowtide.widgets.eq_visualizer import EQVisualizer
 
 _LYRICS_CONTEXT = 2  # lines shown above and below the current line
 _LYRICS_TOTAL = _LYRICS_CONTEXT * 2 + 1  # 5 lines total
 _HEIGHT_COMPACT = 5
-_HEIGHT_LYRICS = _HEIGHT_COMPACT + _LYRICS_TOTAL + 1  # +1 for spacing
+_HEIGHT_EQ = 4 + 1   # 4 bar rows + margin-bottom
+_HEIGHT_LYRICS_EXTRA = _LYRICS_TOTAL + 1
 
 
 def _fmt(seconds: float) -> str:
@@ -117,6 +119,7 @@ class NowPlayingBar(Widget):
         super().__init__(**kwargs)
         self._lyrics: list[LyricLine] = []
         self._lyrics_idx: int = 0
+        self._eq_visible: bool = False
 
     def compose(self) -> ComposeResult:
         yield Label("", id="np-track")
@@ -125,6 +128,7 @@ class NowPlayingBar(Widget):
             for i in range(_LYRICS_TOTAL):
                 cls = "lyric-current" if i == _LYRICS_CONTEXT else "lyric-line"
                 yield Label("", id=f"np-lyric-{i}", classes=cls)
+        yield EQVisualizer()
         with Horizontal(id="np-bottom"):
             yield Label("", id="np-controls")
             yield Label("", id="np-progress")
@@ -212,12 +216,23 @@ class NowPlayingBar(Widget):
     def set_lyrics(self, lines: list[LyricLine]) -> None:
         self._lyrics = lines
         self._lyrics_idx = 0
-        has_lyrics = bool(lines)
-        lyrics_widget = self.query_one("#np-lyrics")
-        lyrics_widget.display = has_lyrics
-        self.styles.height = _HEIGHT_LYRICS if has_lyrics else _HEIGHT_COMPACT
-        if has_lyrics:
+        self.query_one("#np-lyrics").display = bool(lines)
+        self._update_height()
+        if lines:
             self._refresh_lyrics_display()
+
+    def toggle_eq(self) -> None:
+        self._eq_visible = not self._eq_visible
+        self.query_one(EQVisualizer).display = self._eq_visible
+        self._update_height()
+
+    def _update_height(self) -> None:
+        h = _HEIGHT_COMPACT
+        if self._lyrics:
+            h += _HEIGHT_LYRICS_EXTRA
+        if self._eq_visible:
+            h += _HEIGHT_EQ
+        self.styles.height = h
 
     def _refresh_lyrics_display(self) -> None:
         lines = self._lyrics
