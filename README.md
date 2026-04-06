@@ -161,6 +161,7 @@ Create `~/.config/low-tide/config.json` to override defaults:
 | `alsa_device` | string | system default | ALSA device name, e.g. `"hw:0,0"`. |
 | `alsa_bit_depth` | `16` `24` `32` | `32` | Output bit depth when using ALSA. |
 | `alsa_samplerate` | integer | source rate | Output sample rate when using ALSA, e.g. `192000`. |
+| `crossfade` | integer | `5` | Crossfade duration in seconds when crossfade is enabled (toggle with `x`). Crossfade is off at startup regardless of this value. |
 
 To enable Last.fm scrobbling, add a `lastfm` block. Get an API key at [last.fm/api](https://www.last.fm/api/account/create). `password_hash` is the MD5 hash of your password — generate it with `python3 -c "import hashlib; print(hashlib.md5('yourpassword'.encode()).hexdigest())"`.
 
