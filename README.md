@@ -28,7 +28,7 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 - Local library – browse and play locally stored files (FLAC, MP3, OPUS, OGG, M4A); metadata read via mutagen, library cached for fast startup
 
 ### Queue
-- Add individual tracks or entire views to the queue without replacing it
+- Add tracks to the queue without interrupting playback – press `a` on any track to add it, or `A` to add the entire album, playlist, or favourites list
 - Queue persists across restarts – picks up where you left off
 
 ### Now playing
