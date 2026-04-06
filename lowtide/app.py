@@ -18,6 +18,7 @@ from lowtide.screens.library import LibraryScreen
 from lowtide.screens.search import SearchScreen
 from lowtide.tidal_client import TidalClient
 from lowtide.widgets.album_art import AlbumArt
+from lowtide.widgets.eq_visualizer import EQVisualizer
 from lowtide.widgets.now_playing import NowPlayingBar
 
 
@@ -206,6 +207,7 @@ class LowTideApp(App):
         Binding("x", "toggle_crossfade", "Crossfade"),
         Binding("l", "toggle_favourite", "Love"),
         Binding("q", "toggle_queue", "Queue"),
+        Binding("e", "toggle_eq", "EQ"),
         Binding("escape", "go_back", "Back", show=False),
         Binding("ctrl+s", "focus_search", "Search"),
         Binding("ctrl+l", "focus_library", "Library"),
@@ -228,6 +230,8 @@ class LowTideApp(App):
             self._local_library: LocalLibrary | None = LocalLibrary(dirs)
         else:
             self._local_library = None
+        self._eq_theme = cfg.get("eq_theme", "mono")
+        self._eq_labels = bool(cfg.get("eq_labels", False))
         self._nav = list(_NAV_BASE)
         if self._local_library:
             self._nav.append(("local", "Local"))
@@ -253,6 +257,9 @@ class LowTideApp(App):
             self.notify(str(e), severity="error", timeout=10)
             return
         await self.mpris.start()
+        eq = self.query_one(EQVisualizer)
+        eq.set_theme(self._eq_theme)
+        eq._show_labels = self._eq_labels
         self._target_volume = self.player.volume
         if self.player.crossfade_secs > 0:
             self.query_one(NowPlayingBar).crossfade = True
@@ -271,6 +278,7 @@ class LowTideApp(App):
         bar.duration = duration
         bar.paused = paused
         bar.volume = self._target_volume
+        self.query_one(EQVisualizer).paused = paused
         self.mpris.update_position(position)
         self.mpris.update_playback_status(paused)
         self.scrobbler.update(position, duration)
@@ -329,6 +337,7 @@ class LowTideApp(App):
         bar = self.query_one(NowPlayingBar)
         bar.set_track_info(info)
         bar.set_lyrics(lines)
+        self.query_one(EQVisualizer).set_bpm(info.get("bpm"))
 
     # --- Public: enqueue & play ---
 
@@ -345,6 +354,7 @@ class LowTideApp(App):
         self._queue = rotated
         self._current_idx = 0
         self._queue_gen += 1
+        asyncio.ensure_future(self.player.stop())
         self._load_queue(rotated, self._queue_gen)
 
     def append_to_queue(self, tracks: list) -> None:
@@ -363,23 +373,28 @@ class LowTideApp(App):
     def _load_queue(self, tracks: list, gen: int) -> None:
         for i, track in enumerate(tracks):
             if self._queue_gen != gen:
-                return  # a newer enqueue_and_play was called – abort
+                return
             url = self.client.get_track_url(track)
             if not url or self._queue_gen != gen:
                 continue
             if i == 0:
-                self.call_from_thread(
-                    lambda u=url: asyncio.ensure_future(self.player.play(u))
-                )
-                self.call_from_thread(self._set_current_track, track)
+                self.call_from_thread(self._play_if_current, url, gen, track)
             else:
-                self.call_from_thread(
-                    lambda u=url: asyncio.ensure_future(self.player.append(u))
-                )
+                self.call_from_thread(self._append_if_current, url, gen)
         if self._queue_gen == gen:
             self.call_from_thread(
                 lambda: self.query_one(QueuePanel).refresh_queue(self._queue, self._current_idx)
             )
+
+    def _play_if_current(self, url: str, gen: int, track) -> None:
+        if self._queue_gen != gen:
+            return
+        asyncio.ensure_future(self.player.play(url))
+        self._set_current_track(track)
+
+    def _append_if_current(self, url: str, gen: int) -> None:
+        if self._queue_gen == gen:
+            asyncio.ensure_future(self.player.append(url))
 
     @work(thread=True)
     def _append_tracks(self, tracks: list, gen: int) -> None:
@@ -387,10 +402,8 @@ class LowTideApp(App):
             if self._queue_gen != gen:
                 return
             url = self.client.get_track_url(track)
-            if url and self._queue_gen == gen:
-                self.call_from_thread(
-                    lambda u=url: asyncio.ensure_future(self.player.append(u))
-                )
+            if url:
+                self.call_from_thread(self._append_if_current, url, gen)
 
     def on_track_list_track_append_requested(self, event) -> None:
         self.append_to_queue([event.track])
@@ -534,6 +547,9 @@ class LowTideApp(App):
     async def action_toggle_queue(self) -> None:
         panel = self.query_one(QueuePanel)
         panel.display = not panel.display
+
+    async def action_toggle_eq(self) -> None:
+        self.query_one(NowPlayingBar).toggle_eq()
 
     def _save_queue(self) -> None:
         from lowtide.tidal_client import CONF_DIR
