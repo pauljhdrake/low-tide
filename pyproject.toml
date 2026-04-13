@@ -15,7 +15,7 @@ dependencies = [
     "textual-image>=0.8.5",
     "Pillow>=12.2.0",
     "dbus-next>=0.2.3",
-    "pylast>=5.0.0",
+    "pylast>=7.0.2",
     "mutagen>=1.47.0",
 ]
 
