@@ -12,7 +12,7 @@ from lowtide.widgets.eq_visualizer import EQVisualizer
 _LYRICS_CONTEXT = 2  # lines shown above and below the current line
 _LYRICS_TOTAL = _LYRICS_CONTEXT * 2 + 1  # 5 lines total
 _HEIGHT_COMPACT = 5
-_HEIGHT_EQ = 4 + 1   # 4 bar rows + margin-bottom
+_HEIGHT_EQ = 6 + 1   # 6 bar rows + margin-bottom
 _HEIGHT_LYRICS_EXTRA = _LYRICS_TOTAL + 1
 
 
