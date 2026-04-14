@@ -69,6 +69,20 @@ class PlayCountStore:
     def get(self, track) -> int:
         return self._counts.get(_key_for(track), 0)
 
+    def get_by_names(self, artist: str, title: str) -> int:
+        return self._counts.get(_track_key(artist, title), 0)
+
+    def top_artists(self, limit: int = 10) -> list[tuple[str, int]]:
+        """Returns [(artist_name, total_plays), ...] sorted by total plays descending."""
+        from collections import defaultdict
+        totals: dict[str, int] = defaultdict(int)
+        with self._lock:
+            for key, count in self._counts.items():
+                if "\x00" in key:
+                    artist = key.split("\x00", 1)[0]
+                    totals[artist] += count
+        return sorted(totals.items(), key=lambda x: -x[1])[:limit]
+
     def increment(self, track) -> None:
         key = _key_for(track)
         with self._lock:
