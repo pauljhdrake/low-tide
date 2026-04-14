@@ -324,6 +324,7 @@ class LowTideApp(App):
         if self.player.crossfade_secs > 0:
             self.query_one(NowPlayingBar).crossfade = True
         self.player.on_track_start.append(self._on_mpv_track_start)
+        self.player.on_track_end.append(self._on_mpv_track_end)
         self.set_interval(1.0, self._poll_player)
         self._restore_queue()
         self._sync_lastfm_counts()
@@ -351,6 +352,27 @@ class LowTideApp(App):
                 fade_vol = max(0, int((remaining / self.player.crossfade_secs) * self._target_volume))
                 await self.player._cmd(["set_property", "volume", fade_vol])
                 self._crossfading = True
+
+    async def _on_mpv_track_end(self) -> None:
+        """Called when a track ends. Handles queue exhaustion in weighted shuffle modes."""
+        mode = self.player.shuffle_mode
+        if mode not in (SHUFFLE_FAVOURITE, SHUFFLE_DISCOVERY):
+            return
+        if not self._queue or self._current_idx < 0:
+            return
+        # Only act when this was the last track — if there are tracks after
+        # current position, mpv will advance to them naturally.
+        if self._current_idx + 1 < len(self._queue):
+            return
+        remaining = [t for i, t in enumerate(self._queue) if i != self._current_idx]
+        if not remaining:
+            return
+        picks = self._play_count_store.weighted_shuffle(
+            remaining, favourite=(mode == SHUFFLE_FAVOURITE)
+        )
+        if picks:
+            await self.jump_to_queue_index(self._queue.index(picks[0]))
+            self.notify("Wrapping queue")
 
     async def _on_mpv_track_start(self) -> None:
         # Restore volume after a crossfade fade-out
