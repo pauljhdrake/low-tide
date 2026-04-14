@@ -7,6 +7,8 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 
 ![low-tide screenshot](assets/screenshot_eq.png)
 
+![low-tide Ride the Tide](assets/screenshot_2.png)
+
 > **Disclaimer:** low-tide is an independent, unofficial project. It is not affiliated with, endorsed by, or supported by TIDAL Music AS. It uses the unofficial [tidalapi](https://github.com/tamland/python-tidal) library to access TIDAL's API. Use at your own risk – this may break if TIDAL changes their API, and use of unofficial API access may violate TIDAL's terms of service.
 
 ---
