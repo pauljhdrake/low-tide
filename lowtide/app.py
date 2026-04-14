@@ -38,6 +38,7 @@ _NAV_BASE = [
     ("library", "Library"),
     ("search", "Search"),
     ("favorites", "Favorites"),
+    ("ride-the-tide", "Ride the Tide"),
 ]
 
 
@@ -188,6 +189,46 @@ class QueuePanel(Widget):
 
 
 # ---------------------------------------------------------------------------
+# Saved-queue placeholder
+# ---------------------------------------------------------------------------
+
+class _SavedTrack:
+    """
+    Lightweight stand-in populated immediately from queue.json metadata so the
+    UI can be shown before real tidalapi objects are fetched from TIDAL.
+    """
+
+    class _Artist:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    class _Album:
+        def __init__(self, name: str, art_url: str | None) -> None:
+            self.name = name
+            self._art_url = art_url
+
+        def image(self, size: int = 320) -> str | None:
+            return self._art_url
+
+    def __init__(
+        self,
+        track_id: int | None,
+        name: str,
+        artist_name: str,
+        album_name: str,
+        art_url: str | None,
+    ) -> None:
+        self.id = track_id
+        self.name = name
+        self.artist = self._Artist(artist_name)
+        self.album = self._Album(album_name, art_url)
+        self.duration = 0
+        self.explicit = False
+        self.audio_quality = None
+        self.bpm = None
+
+
+# ---------------------------------------------------------------------------
 # Main App
 # ---------------------------------------------------------------------------
 
@@ -231,9 +272,15 @@ class LowTideApp(App):
         self.scrobbler = Scrobbler(cfg)
 
         from lowtide.tidal_client import CONF_DIR
+        from lowtide.recommender import Recommender
         store_path = os.path.join(CONF_DIR, "playcounts.json")
         self._play_count_store = PlayCountStore(store_path)
         self.scrobbler.on_scrobble.append(self._play_count_store.increment)
+        self.recommender = Recommender(
+            network=self.scrobbler._network,
+            store=self._play_count_store,
+            client=client,
+        )
 
         # Local library – only if music_dir is configured
         from lowtide.local_library import LocalLibrary
@@ -277,6 +324,7 @@ class LowTideApp(App):
         if self.player.crossfade_secs > 0:
             self.query_one(NowPlayingBar).crossfade = True
         self.player.on_track_start.append(self._on_mpv_track_start)
+        self.player.on_track_end.append(self._on_mpv_track_end)
         self.set_interval(1.0, self._poll_player)
         self._restore_queue()
         self._sync_lastfm_counts()
@@ -304,6 +352,27 @@ class LowTideApp(App):
                 fade_vol = max(0, int((remaining / self.player.crossfade_secs) * self._target_volume))
                 await self.player._cmd(["set_property", "volume", fade_vol])
                 self._crossfading = True
+
+    async def _on_mpv_track_end(self) -> None:
+        """Called when a track ends. Handles queue exhaustion in weighted shuffle modes."""
+        mode = self.player.shuffle_mode
+        if mode not in (SHUFFLE_FAVOURITE, SHUFFLE_DISCOVERY):
+            return
+        if not self._queue or self._current_idx < 0:
+            return
+        # Only act when this was the last track — if there are tracks after
+        # current position, mpv will advance to them naturally.
+        if self._current_idx + 1 < len(self._queue):
+            return
+        remaining = [t for i, t in enumerate(self._queue) if i != self._current_idx]
+        if not remaining:
+            return
+        picks = self._play_count_store.weighted_shuffle(
+            remaining, favourite=(mode == SHUFFLE_FAVOURITE)
+        )
+        if picks:
+            await self.jump_to_queue_index(self._queue.index(picks[0]))
+            self.notify("Wrapping queue")
 
     async def _on_mpv_track_start(self) -> None:
         # Restore volume after a crossfade fade-out
@@ -431,8 +500,10 @@ class LowTideApp(App):
     async def jump_to_queue_index(self, idx: int) -> None:
         """Skip playback to a specific queue position."""
         if 0 <= idx < len(self._queue):
-            # mpv playlist-play-index jumps to a position
             await self.player._cmd(["set_property", "playlist-pos", idx])
+            # If mpv went idle after the playlist ended, the above restores the
+            # position but leaves it paused — ensure playback actually starts.
+            await self.player._cmd(["set_property", "pause", False])
 
     # --- Open objects (albums, artists, mixes, playlists) by type ---
 
@@ -483,12 +554,22 @@ class LowTideApp(App):
                 await self.action_focus_search()
             elif key == "favorites":
                 await self._open_favorites()
+            elif key == "ride-the-tide":
+                await self._open_ride_the_tide()
             elif key == "local":
                 await self._open_local()
 
     async def _open_favorites(self) -> None:
         from lowtide.screens.favorites import FavoritesScreen
         await self._switch_root(FavoritesScreen(), "favorites")
+
+    async def _open_ride_the_tide(self) -> None:
+        from lowtide.screens.radio import RadioScreen
+        await self._switch_root(RadioScreen(), "ride-the-tide")
+
+    async def on_track_list_track_radio_requested(self, event) -> None:
+        from lowtide.screens.radio import RadioScreen
+        await self.push_view(RadioScreen(seed_track=event.track))
 
     async def _open_local(self) -> None:
         from lowtide.screens.local import LocalLibraryScreen
@@ -549,6 +630,20 @@ class LowTideApp(App):
         await self.player.toggle_pause()
 
     async def action_next_track(self) -> None:
+        mode = self.player.shuffle_mode
+        if mode in (SHUFFLE_FAVOURITE, SHUFFLE_DISCOVERY) and self._current_idx >= 0 and self._queue:
+            remaining = self._queue[self._current_idx + 1:]
+            if not remaining:
+                # Exhausted the queue — wrap around using all tracks except current
+                remaining = [t for i, t in enumerate(self._queue) if i != self._current_idx]
+                self.notify("Wrapping queue")
+            if remaining:
+                picks = self._play_count_store.weighted_shuffle(
+                    remaining, favourite=(mode == SHUFFLE_FAVOURITE)
+                )
+                if picks:
+                    await self.jump_to_queue_index(self._queue.index(picks[0]))
+                    return
         await self.player.next()
 
     async def action_prev_track(self) -> None:
@@ -573,16 +668,26 @@ class LowTideApp(App):
 
     def _save_queue(self) -> None:
         from lowtide.tidal_client import CONF_DIR
-        import os, json as _json
+        import json as _json
         if not self._queue:
             return
         try:
             os.makedirs(CONF_DIR, exist_ok=True)
             path = os.path.join(CONF_DIR, "queue.json")
-            data = {
-                "track_ids": [getattr(t, "id", None) for t in self._queue],
-                "current_idx": self._current_idx,
-            }
+            tracks = []
+            for t in self._queue:
+                try:
+                    art_url = t.album.image(320)
+                except Exception:
+                    art_url = None
+                tracks.append({
+                    "id": getattr(t, "id", None),
+                    "name": getattr(t, "name", ""),
+                    "artist": getattr(getattr(t, "artist", None), "name", ""),
+                    "album": getattr(getattr(t, "album", None), "name", ""),
+                    "art_url": art_url,
+                })
+            data = {"tracks": tracks, "current_idx": self._current_idx}
             with open(path, "w") as f:
                 _json.dump(data, f)
         except Exception:
@@ -591,26 +696,68 @@ class LowTideApp(App):
     @work(thread=True)
     def _restore_queue(self) -> None:
         from lowtide.tidal_client import CONF_DIR
-        import os, json as _json
+        import json as _json
         path = os.path.join(CONF_DIR, "queue.json")
         try:
             with open(path) as f:
                 data = _json.load(f)
-            track_ids = [i for i in data.get("track_ids", []) if i is not None]
-            if not track_ids:
-                return
-            tracks = []
-            for tid in track_ids:
-                try:
-                    tracks.append(self.client.session.track(tid))
-                except Exception:
-                    pass
-            if not tracks:
-                return
-            saved_idx = data.get("current_idx", 0)
-            self.call_from_thread(self._apply_restored_queue, tracks, saved_idx)
         except Exception:
-            pass
+            return
+
+        saved_idx = data.get("current_idx", 0)
+
+        # Support both new format (tracks[]) and old format (track_ids[])
+        raw = data.get("tracks")
+        if raw:
+            placeholders = [
+                _SavedTrack(
+                    t.get("id"),
+                    t.get("name", ""),
+                    t.get("artist", ""),
+                    t.get("album", ""),
+                    t.get("art_url"),
+                )
+                for t in raw
+            ]
+            track_ids = [t.get("id") for t in raw if t.get("id") is not None]
+        else:
+            # Legacy format
+            track_ids = [i for i in data.get("track_ids", []) if i is not None]
+            placeholders = [_SavedTrack(tid, f"Track {tid}", "", "", None) for tid in track_ids]
+
+        if not track_ids:
+            return
+
+        # Show the queue immediately from saved metadata — no TIDAL calls yet
+        self.call_from_thread(self._show_restored_ui, placeholders, saved_idx)
+
+        # Fetch real track objects in the background for playback
+        tracks = []
+        for tid in track_ids:
+            try:
+                tracks.append(self.client.session.track(tid))
+            except Exception:
+                pass
+        if tracks:
+            self.call_from_thread(self._apply_restored_queue, tracks, saved_idx)
+
+    def _show_restored_ui(self, placeholders: list, current_idx: int) -> None:
+        """Populate the UI immediately from saved metadata before playback is ready."""
+        self._queue = placeholders
+        self._current_idx = current_idx
+        panel = self.query_one(QueuePanel)
+        panel.refresh_queue(placeholders, current_idx)
+        panel.display = True
+        if 0 <= current_idx < len(placeholders):
+            track = placeholders[current_idx]
+            bar = self.query_one(NowPlayingBar)
+            bar.track_name = track.name
+            bar.artist_name = track.artist.name
+            try:
+                art_url = track.album.image(320)
+                self.query_one(Sidebar).update_art(art_url)
+            except Exception:
+                pass
 
     def _apply_restored_queue(self, tracks: list, current_idx: int) -> None:
         self.notify(f"Restored queue ({len(tracks)} tracks)", timeout=3)

@@ -83,6 +83,23 @@ class TidalClient:
     def search(self, query: str, limit: int = 50) -> dict:
         return self.session.search(query, limit=limit)
 
+    def resolve_track(self, artist: str, title: str):
+        """Search TIDAL for a track by artist + title. Returns the best match or None."""
+        try:
+            results = self.session.search(f"{artist} {title}", limit=10)
+            tracks = results.get("tracks") or []
+            a_low = artist.lower()
+            t_low = title.lower()
+            for track in tracks:
+                r_artist = getattr(getattr(track, "artist", None), "name", "").lower()
+                r_title = getattr(track, "name", "").lower()
+                if (a_low in r_artist or r_artist in a_low) and \
+                   (t_low in r_title or r_title in t_low):
+                    return track
+        except Exception:
+            pass
+        return None
+
     def get_user_playlists(self) -> list:
         return self.session.user.playlists()
 
