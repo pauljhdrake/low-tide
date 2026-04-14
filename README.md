@@ -153,13 +153,13 @@ Shuffle modes are driven by a local play count store at `~/.config/low-tide/play
 
 - **Local scrobbles** – incremented automatically each time you listen past 50% of a track
 - **Last.fm** – if Last.fm is configured, your all-time top tracks are synced at startup
-- **Spotify import** – point it at your Spotify GDPR data export directory to seed from years of history:
+- **Spotify import** – if you're moving from Spotify, run:
 
-```python
-from lowtide.play_count_store import PlayCountStore
-store = PlayCountStore("~/.config/low-tide/playcounts.json")
-store.import_spotify("/path/to/your/spotify-data/")
+```bash
+low-tide import-spotify ~/path/to/your/spotify-data/
 ```
+
+To get your data: go to [spotify.com](https://spotify.com) → Account → Privacy settings → Request data download. You'll receive an email with a zip file — extract it and pass the folder path to the command above. Only streams over 30 seconds count, matching the scrobbling threshold used elsewhere.
 
 ## Transparency
 
