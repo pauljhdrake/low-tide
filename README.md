@@ -21,6 +21,11 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 - ALSA direct output for bit-perfect playback (optional, see [Configuration](#configuration))
 - Stream quality from 96 kbps AAC up to Hi-Res Lossless (TIDAL MAX)
 
+### Discovery and radio
+- **Track radio** – press `R` on any track to build a 25-track radio seeded from that track using Last.fm similarity data, artist tag matching, and your play history
+- **Ride the Tide** – personalised recommendations from the sidebar, built from your overall listening history across TIDAL, Last.fm, and Spotify; no seed track required
+- Both modes work without Last.fm using play count data alone, with a prompt to configure it for richer results
+
 ### Library and browsing
 - Browse playlists, mixes, and TIDAL's For You recommendations
 - Favourites browser with separate tabs for saved tracks, albums, and artists – full library, not capped at 50
@@ -31,7 +36,7 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 
 ### Queue
 - Add tracks to the queue without interrupting playback – press `a` on any track to add it, or `A` to add the entire album, playlist, or favourites list
-- Queue persists across restarts – picks up where you left off
+- Queue persists across restarts – reopens with the queue panel visible and playback resuming where you left off
 
 ### Now playing
 - Animated EQ visualiser with cava-style gravity fall, peak hold indicators, and analogue gradient colouring (toggle with `e`)
@@ -130,6 +135,7 @@ The source code for token handling is in [`lowtide/tidal_client.py`](lowtide/tid
 | `r` | Toggle repeat |
 | `l` | Love / unlove current track |
 | `x` | Toggle crossfade |
+| `R` | Start radio from focused track |
 | `a` | Add focused track to queue |
 | `A` | Add all tracks in current view to queue |
 | `q` | Toggle queue panel |
@@ -234,7 +240,8 @@ lowtide/
   scrobbler.py         # Last.fm scrobbling
   play_count_store.py  # play count persistence and weighted shuffle
   app.py               # app layout: sidebar, content area, queue panel
-  screens/             # library, search, playlist, album, artist, favorites
+  recommender.py       # Last.fm-powered radio and Ride the Tide logic
+  screens/             # library, search, playlist, album, artist, favorites, radio
   widgets/             # now_playing bar, track list table, album art, EQ visualiser
 ```
 
