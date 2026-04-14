@@ -478,8 +478,10 @@ class LowTideApp(App):
     async def jump_to_queue_index(self, idx: int) -> None:
         """Skip playback to a specific queue position."""
         if 0 <= idx < len(self._queue):
-            # mpv playlist-play-index jumps to a position
             await self.player._cmd(["set_property", "playlist-pos", idx])
+            # If mpv went idle after the playlist ended, the above restores the
+            # position but leaves it paused — ensure playback actually starts.
+            await self.player._cmd(["set_property", "pause", False])
 
     # --- Open objects (albums, artists, mixes, playlists) by type ---
 
@@ -607,8 +609,12 @@ class LowTideApp(App):
 
     async def action_next_track(self) -> None:
         mode = self.player.shuffle_mode
-        if mode in (SHUFFLE_FAVOURITE, SHUFFLE_DISCOVERY) and self._current_idx >= 0:
+        if mode in (SHUFFLE_FAVOURITE, SHUFFLE_DISCOVERY) and self._current_idx >= 0 and self._queue:
             remaining = self._queue[self._current_idx + 1:]
+            if not remaining:
+                # Exhausted the queue — wrap around using all tracks except current
+                remaining = [t for i, t in enumerate(self._queue) if i != self._current_idx]
+                self.notify("Wrapping queue")
             if remaining:
                 picks = self._play_count_store.weighted_shuffle(
                     remaining, favourite=(mode == SHUFFLE_FAVOURITE)
