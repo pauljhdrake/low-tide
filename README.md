@@ -5,7 +5,7 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-![low-tide screenshot](assets/screenshot.jpg)
+![low-tide screenshot](assets/screenshot_eq.png)
 
 > **Disclaimer:** low-tide is an independent, unofficial project. It is not affiliated with, endorsed by, or supported by TIDAL Music AS. It uses the unofficial [tidalapi](https://github.com/tamland/python-tidal) library to access TIDAL's API. Use at your own risk – this may break if TIDAL changes their API, and use of unofficial API access may violate TIDAL's terms of service.
 
