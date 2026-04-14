@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from typing import Callable
 
 log = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ class Scrobbler:
         self._current_track = None
         self._track_start_time: int = 0
         self._scrobbled: bool = False
+        self.on_scrobble: list[Callable] = []
         self._setup(config.get("lastfm", {}))
 
     def _setup(self, cfg: dict) -> None:
@@ -75,5 +77,10 @@ class Scrobbler:
             )
             self._scrobbled = True
             log.info("Scrobbled: %s – %s", artist, title)
+            for cb in self.on_scrobble:
+                try:
+                    cb(track)
+                except Exception:
+                    pass
         except Exception as e:
             log.debug("Scrobble failed: %s", e)

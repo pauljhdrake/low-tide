@@ -54,7 +54,7 @@ class Player:
         self._pending: dict[int, asyncio.Future] = {}
         self._read_task: Optional[asyncio.Task] = None
         self.volume: int = 80
-        self.shuffle: bool = False
+        self.shuffle_mode: int = 0  # 0=off 1=random 2=favourite 3=discovery
         self.repeat: bool = False
 
         # Callbacks fired on mpv events

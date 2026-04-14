@@ -5,7 +5,7 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-![low-tide screenshot](assets/screenshot.jpg)
+![low-tide screenshot](assets/screenshot_eq.png)
 
 > **Disclaimer:** low-tide is an independent, unofficial project. It is not affiliated with, endorsed by, or supported by TIDAL Music AS. It uses the unofficial [tidalapi](https://github.com/tamland/python-tidal) library to access TIDAL's API. Use at your own risk – this may break if TIDAL changes their API, and use of unofficial API access may violate TIDAL's terms of service.
 
@@ -15,13 +15,15 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 
 ### Playback
 - Full audio playback via `mpv` – no browser, no Electron
-- Shuffle, repeat, and crossfade (with configurable fade duration)
+- Four shuffle modes: off, random, favourites (weight by play count), and discovery (surface unplayed tracks) – press `s` to cycle
+- Repeat and crossfade (with configurable fade duration)
 - ReplayGain normalisation – album or track mode via mpv
 - ALSA direct output for bit-perfect playback (optional, see [Configuration](#configuration))
 - Stream quality from 96 kbps AAC up to Hi-Res Lossless (TIDAL MAX)
 
 ### Library and browsing
-- Browse playlists, favourites, mixes, and TIDAL's For You recommendations
+- Browse playlists, mixes, and TIDAL's For You recommendations
+- Favourites browser with separate tabs for saved tracks, albums, and artists – full library, not capped at 50
 - Search tracks, albums, and artists
 - Album and artist drill-down views
 - Love / unlove tracks – syncs with TIDAL favourites
@@ -32,6 +34,7 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 - Queue persists across restarts – picks up where you left off
 
 ### Now playing
+- Animated EQ visualiser with cava-style gravity fall, peak hold indicators, and analogue gradient colouring (toggle with `e`)
 - Synced lyrics displayed in the player bar, scrolling in time with playback
 - Track info – BPM, audio quality, and explicit flag
 - Album art rendered inline using the kitty graphics protocol
@@ -39,6 +42,7 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 ### Integrations
 - **MPRIS2** – media keys, `playerctl`, and desktop now-playing panels
 - **Last.fm scrobbling** – configured via `config.json` (see [Configuration](#configuration))
+- **Play count tracking** – local play counts seed the favourites/discovery shuffle modes; Last.fm history synced automatically at startup if configured; Spotify listening history can be imported from a GDPR data export (see [Shuffle modes](#shuffle-modes))
 
 ### Interface
 - Transparent UI designed for GPU-accelerated terminals
@@ -121,7 +125,8 @@ The source code for token handling is in [`lowtide/tidal_client.py`](lowtide/tid
 | `n` | Next track |
 | `p` | Previous track |
 | `]` / `[` | Volume up / down |
-| `s` | Toggle shuffle |
+| `s` | Cycle shuffle mode (off → random → favourites → discovery) |
+| `e` | Toggle EQ visualiser |
 | `r` | Toggle repeat |
 | `l` | Love / unlove current track |
 | `x` | Toggle crossfade |
@@ -132,6 +137,29 @@ The source code for token handling is in [`lowtide/tidal_client.py`](lowtide/tid
 | `ctrl+l` | Go to Library |
 | `escape` | Navigate back |
 | `ctrl+q` | Quit |
+
+## Shuffle modes
+
+Press `s` to cycle through four modes. The active mode is shown in the now-playing bar:
+
+| Icon | Mode | Behaviour |
+|------|------|-----------|
+| `⇄` (dim) | Off | No shuffle |
+| `⇄` (bold) | Random | Flat random order |
+| `★` | Favourites | Tracks you've played more appear earlier |
+| `⊕` | Discovery | Tracks you've played least (or never) appear earlier |
+
+Shuffle modes are driven by a local play count store at `~/.config/low-tide/playcounts.json`, built from three sources:
+
+- **Local scrobbles** – incremented automatically each time you listen past 50% of a track
+- **Last.fm** – if Last.fm is configured, your all-time top tracks are synced at startup
+- **Spotify import** – point it at your Spotify GDPR data export directory to seed from years of history:
+
+```python
+from lowtide.play_count_store import PlayCountStore
+store = PlayCountStore("~/.config/low-tide/playcounts.json")
+store.import_spotify("/path/to/your/spotify-data/")
+```
 
 ## Transparency
 
@@ -200,12 +228,14 @@ Example for bit-perfect TIDAL MAX output:
 
 ```
 lowtide/
-  main.py            # entry point
-  tidal_client.py    # tidalapi wrapper
-  player.py          # mpv IPC control
-  app.py             # app layout: sidebar, content area, queue panel
-  screens/           # library, search, playlist, album, artist, favorites
-  widgets/           # now_playing bar, track list table, album art
+  main.py              # entry point
+  tidal_client.py      # tidalapi wrapper
+  player.py            # mpv IPC control
+  scrobbler.py         # Last.fm scrobbling
+  play_count_store.py  # play count persistence and weighted shuffle
+  app.py               # app layout: sidebar, content area, queue panel
+  screens/             # library, search, playlist, album, artist, favorites
+  widgets/             # now_playing bar, track list table, album art, EQ visualiser
 ```
 
 ## License
