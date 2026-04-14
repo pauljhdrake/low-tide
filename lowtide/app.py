@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 from typing import Optional
+
+log = logging.getLogger(__name__)
 
 from textual import work
 from textual.app import App, ComposeResult
@@ -12,6 +16,10 @@ from textual.widgets import Label, ListItem, ListView
 
 from lowtide.lyrics import parse_lrc
 from lowtide.mpris import MPRISService
+from lowtide.play_count_store import (
+    SHUFFLE_DISCOVERY, SHUFFLE_FAVOURITE, SHUFFLE_LABELS, SHUFFLE_OFF,
+    SHUFFLE_RANDOM, PlayCountStore,
+)
 from lowtide.player import Player
 from lowtide.scrobbler import Scrobbler
 from lowtide.screens.library import LibraryScreen
@@ -222,6 +230,11 @@ class LowTideApp(App):
         self.mpris = MPRISService(self)
         self.scrobbler = Scrobbler(cfg)
 
+        from lowtide.tidal_client import CONF_DIR
+        store_path = os.path.join(CONF_DIR, "playcounts.json")
+        self._play_count_store = PlayCountStore(store_path)
+        self.scrobbler.on_scrobble.append(self._play_count_store.increment)
+
         # Local library – only if music_dir is configured
         from lowtide.local_library import LocalLibrary
         raw = cfg.get("music_dir")
@@ -266,6 +279,7 @@ class LowTideApp(App):
         self.player.on_track_start.append(self._on_mpv_track_start)
         self.set_interval(1.0, self._poll_player)
         self._restore_queue()
+        self._sync_lastfm_counts()
 
     # --- Player polling ---
 
@@ -345,11 +359,17 @@ class LowTideApp(App):
         # Rotate so the selected track is at position 0, matching mpv's playlist order.
         # self._queue[N] will always equal mpv playlist position N.
         rotated = tracks[start_index:] + tracks[:start_index]
-        if self.player.shuffle:
+        mode = self.player.shuffle_mode
+        if mode != SHUFFLE_OFF:
             import random
             first = rotated[:1]
             rest = rotated[1:]
-            random.shuffle(rest)
+            if mode == SHUFFLE_RANDOM:
+                random.shuffle(rest)
+            elif mode == SHUFFLE_FAVOURITE:
+                rest = self._play_count_store.weighted_shuffle(rest, favourite=True)
+            elif mode == SHUFFLE_DISCOVERY:
+                rest = self._play_count_store.weighted_shuffle(rest, favourite=False)
             rotated = first + rest
         self._queue = rotated
         self._current_idx = 0
@@ -490,11 +510,11 @@ class LowTideApp(App):
             self.notify(f"Crossfade {self.player.crossfade_secs}s")
 
     async def action_toggle_shuffle(self) -> None:
-        self.player.shuffle = not self.player.shuffle
-        self.query_one(NowPlayingBar).shuffle = self.player.shuffle
-        self.mpris.update_shuffle(self.player.shuffle)
-        state = "on" if self.player.shuffle else "off"
-        self.notify(f"Shuffle {state}")
+        self.player.shuffle_mode = (self.player.shuffle_mode + 1) % 4
+        mode = self.player.shuffle_mode
+        self.query_one(NowPlayingBar).shuffle_mode = mode
+        self.mpris.update_shuffle(mode != SHUFFLE_OFF)
+        self.notify(f"Shuffle: {SHUFFLE_LABELS[mode]}")
 
     async def action_toggle_repeat(self) -> None:
         await self.player.toggle_repeat()
@@ -596,7 +616,20 @@ class LowTideApp(App):
         self.notify(f"Restored queue ({len(tracks)} tracks)", timeout=3)
         self.enqueue_and_play(tracks, start_index=current_idx)
 
+    @work(thread=True)
+    def _sync_lastfm_counts(self) -> None:
+        if not self.scrobbler.enabled:
+            return
+        cfg = self.client.config.get("lastfm", {})
+        username = cfg.get("username", "")
+        if not username:
+            return
+        n = self._play_count_store.sync_lastfm(self.scrobbler._network, username)
+        if n:
+            log.debug("Last.fm play count sync: %d tracks", n)
+
     async def on_unmount(self) -> None:
         self._save_queue()
+        self._play_count_store.save()
         await self.mpris.stop()
         await self.player.shutdown()

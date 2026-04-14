@@ -87,13 +87,13 @@ class TidalClient:
         return self.session.user.playlists()
 
     def get_favorite_tracks(self) -> list:
-        return self.session.user.favorites.tracks()
+        return self.session.user.favorites.tracks_paginated()
 
     def get_favorite_albums(self) -> list:
-        return self.session.user.favorites.albums()
+        return self.session.user.favorites.albums_paginated()
 
     def get_favorite_artists(self) -> list:
-        return self.session.user.favorites.artists()
+        return self.session.user.favorites.artists_paginated()
 
     def get_album_tracks(self, album) -> list:
         return album.tracks()

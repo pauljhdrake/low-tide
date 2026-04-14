@@ -110,7 +110,7 @@ class NowPlayingBar(Widget):
     position: reactive[float] = reactive(0.0)
     duration: reactive[float] = reactive(0.0)
     volume: reactive[int] = reactive(80)
-    shuffle: reactive[bool] = reactive(False)
+    shuffle_mode: reactive[int] = reactive(0)
     repeat: reactive[bool] = reactive(False)
     favourited: reactive[bool] = reactive(False)
     crossfade: reactive[bool] = reactive(False)
@@ -162,7 +162,7 @@ class NowPlayingBar(Widget):
         icon = "▶" if paused else "⏸"
         self.query_one("#np-controls", Label).update(f"[b]⏮  {icon}  ⏭[/b]")
 
-    def watch_shuffle(self, _: bool) -> None:
+    def watch_shuffle_mode(self, _: int) -> None:
         self._refresh_modes()
 
     def watch_repeat(self, _: bool) -> None:
@@ -174,10 +174,17 @@ class NowPlayingBar(Widget):
     def watch_crossfade(self, _: bool) -> None:
         self._refresh_modes()
 
+    _SHUFFLE_ICONS = {
+        0: "[dim]⇄[/dim]",
+        1: "[b]⇄[/b]",
+        2: "[b]★[/b]",
+        3: "[b]⊕[/b]",
+    }
+
     def _refresh_modes(self) -> None:
         parts = [
             "[b]♥[/b]" if self.favourited else "[dim]♡[/dim]",
-            "[b]⇄[/b]" if self.shuffle else "[dim]⇄[/dim]",
+            self._SHUFFLE_ICONS.get(self.shuffle_mode, "[dim]⇄[/dim]"),
             "[b]↺[/b]" if self.repeat else "[dim]↺[/dim]",
             "[b]≋[/b]" if self.crossfade else "[dim]≋[/dim]",
         ]
