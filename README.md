@@ -198,6 +198,8 @@ Create `~/.config/low-tide/config.json` to override defaults:
 | `alsa_bit_depth` | `16` `24` `32` | `32` | Output bit depth when using ALSA. |
 | `alsa_samplerate` | integer | source rate | Output sample rate when using ALSA, e.g. `192000`. |
 | `crossfade` | integer | `5` | Crossfade duration in seconds when crossfade is enabled (toggle with `x`). Crossfade is off at startup regardless of this value. |
+| `eq_theme` | `"classic"` `"fire"` `"ice"` `"mono"` `"neon"` | `"mono"` | Colour theme for the EQ visualiser in the now-playing bar. |
+| `eq_labels` | `true` / `false` | `false` | Show frequency labels (32 Hz – 16 kHz) beneath the EQ visualiser bars. |
 
 To enable Last.fm scrobbling, add a `lastfm` block. Get an API key at [last.fm/api](https://www.last.fm/api/account/create). `password_hash` is the MD5 hash of your password — generate it with `python3 -c "import hashlib; print(hashlib.md5('yourpassword'.encode()).hexdigest())"`.
 
