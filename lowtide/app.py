@@ -270,7 +270,6 @@ class LowTideApp(App):
         self.player = Player(config=cfg)
         self.mpris = MPRISService(self)
         self.scrobbler = Scrobbler(cfg)
-
         from lowtide.tidal_client import CONF_DIR
         from lowtide.recommender import Recommender
         store_path = os.path.join(CONF_DIR, "playcounts.json")
@@ -302,6 +301,7 @@ class LowTideApp(App):
         self._current_favourited: bool = False
         self._target_volume: int = 80
         self._crossfading: bool = False
+        self._ride_the_tide_cache: tuple[list, str | None] | None = None
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="main"):
@@ -565,7 +565,7 @@ class LowTideApp(App):
 
     async def _open_ride_the_tide(self) -> None:
         from lowtide.screens.radio import RadioScreen
-        await self._switch_root(RadioScreen(), "ride-the-tide")
+        await self._switch_root(RadioScreen(cached=self._ride_the_tide_cache), "ride-the-tide")
 
     async def on_track_list_track_radio_requested(self, event) -> None:
         from lowtide.screens.radio import RadioScreen
@@ -634,7 +634,6 @@ class LowTideApp(App):
         if mode in (SHUFFLE_FAVOURITE, SHUFFLE_DISCOVERY) and self._current_idx >= 0 and self._queue:
             remaining = self._queue[self._current_idx + 1:]
             if not remaining:
-                # Exhausted the queue — wrap around using all tracks except current
                 remaining = [t for i, t in enumerate(self._queue) if i != self._current_idx]
                 self.notify("Wrapping queue")
             if remaining:

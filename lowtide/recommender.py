@@ -122,7 +122,20 @@ class Recommender:
     def _lastfm_ride_the_tide(self, n: int) -> list:
         top_artists = self._store.top_artists(limit=10)
         if not top_artists:
-            log.debug("ride the tide: no play count data, falling back")
+            # Cold start: no local play counts yet – query Last.fm directly
+            try:
+                import pylast
+                user = self._network.get_authenticated_user()
+                items = user.get_top_artists(period=pylast.PERIOD_1MONTH, limit=10)
+                top_artists = [
+                    (getattr(item.item, "name", ""), int(item.weight or 1))
+                    for item in items
+                    if getattr(item.item, "name", "")
+                ]
+                log.debug("ride the tide: seeding from Last.fm top artists (%d)", len(top_artists))
+            except Exception as e:
+                log.debug("ride the tide: Last.fm top artists failed: %s", e)
+        if not top_artists:
             return self._fallback_ride_the_tide(n)
 
         # Build a mood tag profile from the user's top 3 artists
@@ -217,10 +230,11 @@ class Recommender:
             return []
 
     def _fallback_ride_the_tide(self, n: int) -> list:
-        """Without Last.fm: surface less-heard tracks from your most-played artists."""
+        """Without Last.fm: surface less-heard tracks from your most-played artists.
+        Falls back to a shuffled sample of TIDAL favourites on a cold start."""
         top_artists = self._store.top_artists(limit=5)
         if not top_artists:
-            return []
+            return self._fallback_from_favourites(n)
 
         results = []
         for artist_name, _ in top_artists:
@@ -245,3 +259,14 @@ class Recommender:
 
         results.sort(key=lambda x: -x[1])
         return [t for t, _ in results[:n]]
+
+    def _fallback_from_favourites(self, n: int) -> list:
+        """Cold-start fallback: return a random sample of TIDAL favourites."""
+        import random
+        try:
+            tracks = self._client.get_favorite_tracks()
+            random.shuffle(tracks)
+            return tracks[:n]
+        except Exception as e:
+            log.debug("fallback from favourites failed: %s", e)
+            return []
