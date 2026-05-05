@@ -12,6 +12,7 @@ from textual.widgets import Label, ListItem, ListView
 
 from lowtide.lyrics import parse_lrc
 from lowtide.mpris import MPRISService
+from lowtide.play_count_store import PlayCountStore
 from lowtide.player import Player
 from lowtide.scrobbler import Scrobbler
 from lowtide.screens.library import LibraryScreen
@@ -221,6 +222,7 @@ class LowTideApp(App):
         self.player = Player(config=cfg)
         self.mpris = MPRISService(self)
         self.scrobbler = Scrobbler(cfg)
+        self.play_count_store = PlayCountStore()
 
         # Local library – only if music_dir is configured
         from lowtide.local_library import LocalLibrary
@@ -266,6 +268,7 @@ class LowTideApp(App):
         self.player.on_track_start.append(self._on_mpv_track_start)
         self.set_interval(1.0, self._poll_player)
         self._restore_queue()
+        self._sync_lastfm_counts()
 
     # --- Player polling ---
 
@@ -304,6 +307,7 @@ class LowTideApp(App):
             self._set_current_track(track)
             self.query_one(QueuePanel).refresh_queue(self._queue, self._current_idx)
             self.scrobbler.track_started(track)
+            self.play_count_store.record_play(track)
             self._load_track_extras(track)
 
     def _set_current_track(self, track) -> None:
@@ -345,12 +349,16 @@ class LowTideApp(App):
         # Rotate so the selected track is at position 0, matching mpv's playlist order.
         # self._queue[N] will always equal mpv playlist position N.
         rotated = tracks[start_index:] + tracks[:start_index]
-        if self.player.shuffle:
+        if self.player.shuffle_mode == 1:
             import random
             first = rotated[:1]
             rest = rotated[1:]
             random.shuffle(rest)
             rotated = first + rest
+        elif self.player.shuffle_mode in (2, 3):
+            first = rotated[:1]
+            rest = rotated[1:]
+            rotated = first + self.play_count_store.weighted_order(rest, self.player.shuffle_mode)
         self._queue = rotated
         self._current_idx = 0
         self._queue_gen += 1
@@ -490,11 +498,11 @@ class LowTideApp(App):
             self.notify(f"Crossfade {self.player.crossfade_secs}s")
 
     async def action_toggle_shuffle(self) -> None:
-        self.player.shuffle = not self.player.shuffle
-        self.query_one(NowPlayingBar).shuffle = self.player.shuffle
-        self.mpris.update_shuffle(self.player.shuffle)
-        state = "on" if self.player.shuffle else "off"
-        self.notify(f"Shuffle {state}")
+        self.player.shuffle_mode = (self.player.shuffle_mode + 1) % 4
+        self.query_one(NowPlayingBar).shuffle_mode = self.player.shuffle_mode
+        self.mpris.update_shuffle(self.player.shuffle_mode != 0)
+        labels = ["off", "random", "favourite", "discovery"]
+        self.notify(f"Shuffle: {labels[self.player.shuffle_mode]}")
 
     async def action_toggle_repeat(self) -> None:
         await self.player.toggle_repeat()
@@ -529,6 +537,13 @@ class LowTideApp(App):
         await self.player.toggle_pause()
 
     async def action_next_track(self) -> None:
+        if self.player.shuffle_mode in (2, 3) and self._queue:
+            remaining = self._queue[self._current_idx + 1:]
+            if remaining:
+                chosen = self.play_count_store.weighted_order(remaining, self.player.shuffle_mode)[0]
+                idx = self._queue.index(chosen, self._current_idx + 1)
+                await self.player._cmd(["set_property", "playlist-pos", idx])
+                return
         await self.player.next()
 
     async def action_prev_track(self) -> None:
@@ -595,6 +610,25 @@ class LowTideApp(App):
     def _apply_restored_queue(self, tracks: list, current_idx: int) -> None:
         self.notify(f"Restored queue ({len(tracks)} tracks)", timeout=3)
         self.enqueue_and_play(tracks, start_index=current_idx)
+
+    @work(thread=True)
+    def _sync_lastfm_counts(self) -> None:
+        cfg = self.client.config.get("lastfm", {})
+        api_key = cfg.get("api_key")
+        api_secret = cfg.get("api_secret")
+        username = cfg.get("username")
+        if not all([api_key, api_secret, username]):
+            return
+        try:
+            import pylast
+            network = pylast.LastFMNetwork(api_key=api_key, api_secret=api_secret)
+            count = self.play_count_store.sync_lastfm(network, username)
+            if count:
+                self.call_from_thread(
+                    lambda: self.notify(f"Synced {count} tracks from Last.fm", timeout=4)
+                )
+        except Exception:
+            pass
 
     async def on_unmount(self) -> None:
         self._save_queue()

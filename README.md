@@ -15,7 +15,8 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 
 ### Playback
 - Full audio playback via `mpv` – no browser, no Electron
-- Shuffle, repeat, and crossfade (with configurable fade duration)
+- Four shuffle modes: off, random, favourite (weighted toward most-played), discovery (weighted toward least-played)
+- Repeat and crossfade (with configurable fade duration)
 - ReplayGain normalisation – album or track mode via mpv
 - ALSA direct output for bit-perfect playback (optional, see [Configuration](#configuration))
 - Stream quality from 96 kbps AAC up to Hi-Res Lossless (TIDAL MAX)
@@ -121,7 +122,7 @@ The source code for token handling is in [`lowtide/tidal_client.py`](lowtide/tid
 | `n` | Next track |
 | `p` | Previous track |
 | `]` / `[` | Volume up / down |
-| `s` | Toggle shuffle |
+| `s` | Cycle shuffle mode (off → random → favourite → discovery) |
 | `r` | Toggle repeat |
 | `l` | Love / unlove current track |
 | `x` | Toggle crossfade |
