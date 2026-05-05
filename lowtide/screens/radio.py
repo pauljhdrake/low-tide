@@ -37,10 +37,10 @@ class RadioScreen(Widget):
     }
     """
 
-    def __init__(self, seed_track=None, **kwargs) -> None:
+    def __init__(self, seed_track=None, cached: tuple | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
-        # seed_track=None means Ride the Tide mode
         self._seed_track = seed_track
+        self._cached = cached  # pre-built results for Ride the Tide
 
     def compose(self) -> ComposeResult:
         if self._seed_track:
@@ -55,7 +55,10 @@ class RadioScreen(Widget):
         yield TrackList(id="radio-tracks")
 
     def on_mount(self) -> None:
-        self._build()
+        if self._cached is not None:
+            self._populate(*self._cached)
+        else:
+            self._build()
 
     @work(thread=True)
     def _build(self) -> None:
@@ -65,11 +68,13 @@ class RadioScreen(Widget):
                 tracks, nudge = recommender.build_track_radio(self._seed_track)
             else:
                 tracks, nudge = recommender.build_ride_the_tide()
+                self.app.call_from_thread(
+                    setattr, self.app, "_ride_the_tide_cache", (tracks, nudge)
+                )
             self.app.call_from_thread(self._populate, tracks, nudge)
         except Exception as e:
             self.app.call_from_thread(
-                self.query_one("#radio-status", Label).update,
-                f"[red]Error: {e}[/red]",
+                lambda: self.query_one("#radio-status", Label).update(f"[red]Error: {e}[/red]")
             )
 
     def _populate(self, tracks: list, nudge: str | None) -> None:

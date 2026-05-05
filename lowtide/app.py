@@ -301,6 +301,7 @@ class LowTideApp(App):
         self._current_favourited: bool = False
         self._target_volume: int = 80
         self._crossfading: bool = False
+        self._ride_the_tide_cache: tuple[list, str | None] | None = None
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="main"):
@@ -564,7 +565,7 @@ class LowTideApp(App):
 
     async def _open_ride_the_tide(self) -> None:
         from lowtide.screens.radio import RadioScreen
-        await self._switch_root(RadioScreen(), "ride-the-tide")
+        await self._switch_root(RadioScreen(cached=self._ride_the_tide_cache), "ride-the-tide")
 
     async def on_track_list_track_radio_requested(self, event) -> None:
         from lowtide.screens.radio import RadioScreen
