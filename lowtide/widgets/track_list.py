@@ -32,6 +32,11 @@ class TrackList(Widget):
             self.track = track
             self.index = index
 
+    class TrackRadioRequested(Message):
+        def __init__(self, track) -> None:
+            super().__init__()
+            self.track = track
+
     def __init__(self, tracks: Optional[list] = None, **kwargs):
         super().__init__(**kwargs)
         self._tracks: list = tracks or []
@@ -78,11 +83,15 @@ class TrackList(Widget):
             self.post_message(self.TrackSelected(self._tracks[idx], idx))
 
     def on_key(self, event) -> None:
+        idx = self.query_one(DataTable).cursor_row
         if event.key == "a":
-            idx = self.query_one(DataTable).cursor_row
             if 0 <= idx < len(self._tracks):
                 event.stop()
                 self.post_message(self.TrackAppendRequested(self._tracks[idx], idx))
+        elif event.key == "R":
+            if 0 <= idx < len(self._tracks):
+                event.stop()
+                self.post_message(self.TrackRadioRequested(self._tracks[idx]))
 
     @property
     def tracks(self) -> list:

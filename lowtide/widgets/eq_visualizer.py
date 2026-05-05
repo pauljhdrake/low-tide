@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import random
 
 from textual.app import ComposeResult
@@ -9,16 +8,27 @@ from textual.widget import Widget
 from textual.widgets import Static
 
 _BARS = 10
-_MAX_HEIGHT = 4
+_MAX_HEIGHT = 6
 _FPS = 30
 _FREQ_LABELS = ["32", "64", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
 
-_BAND_CEILING   = [1.00, 0.97, 0.93, 0.88, 0.82, 0.76, 0.70, 0.64, 0.58, 0.52]
-_BAND_RISE      = [0.10, 0.11, 0.13, 0.15, 0.17, 0.20, 0.23, 0.26, 0.30, 0.34]
-_BAND_DECAY     = [0.03, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.10, 0.12, 0.14]
-_BAND_CHANGE_PROB = [0.03, 0.03, 0.04, 0.05, 0.06, 0.07, 0.09, 0.11, 0.14, 0.17]
+# Sub-character block elements: index 1–8 map to ▁▂▃▄▅▆▇█
+_BLOCKS = " ▁▂▃▄▅▆▇█"
 
-# Themes: four RGB stops, bottom row → top row
+# Per-band simulation parameters
+_BAND_CEILING     = [1.00, 0.97, 0.93, 0.88, 0.82, 0.76, 0.70, 0.64, 0.58, 0.52]
+_BAND_RISE        = [0.30, 0.32, 0.35, 0.38, 0.40, 0.43, 0.46, 0.48, 0.50, 0.50]
+_BAND_CHANGE_PROB = [0.02, 0.02, 0.03, 0.03, 0.04, 0.05, 0.06, 0.08, 0.10, 0.12]
+_TARGET_DECAY     = 0.97  # slow decay so bars hold height before falling
+
+# Gravity model (cava-style): velocity accumulates each frame
+_GRAVITY_ACCEL = 0.038   # fall velocity increment per frame
+_GRAVITY_MOD   = 2.0     # scales parabolic decay; higher = faster fall
+_PEAK_HOLD     = 14      # frames the peak indicator holds before falling
+_PEAK_GRAVITY  = 0.025   # peak indicator fall acceleration
+_MONSTERCAT    = 1.5     # horizontal smoothing; higher = more spread
+
+# Themes: four RGB stops, bottom → top (used as a continuous gradient)
 _RGB = tuple[int, int, int]
 THEMES: dict[str, list[_RGB]] = {
     "classic": [(0, 130, 0),   (0, 210, 0),   (210, 210, 0), (210, 55, 55) ],
@@ -36,21 +46,9 @@ def _lerp(a: int, b: int, t: float) -> int:
     return int(a + (b - a) * t)
 
 
-def _row_color(stops: list[_RGB], row: int) -> str:
-    """Interpolate across the gradient stops for the given row (0 = bottom)."""
-    t = row / (_MAX_HEIGHT - 1) if _MAX_HEIGHT > 1 else 0.0
-    seg = t * (len(stops) - 1)
-    lo = min(int(seg), len(stops) - 2)
-    frac = seg - lo
-    r = _lerp(stops[lo][0], stops[lo + 1][0], frac)
-    g = _lerp(stops[lo][1], stops[lo + 1][1], frac)
-    b = _lerp(stops[lo][2], stops[lo + 1][2], frac)
-    return f"#{r:02x}{g:02x}{b:02x}"
-
-
-def _row_color_faded(stops: list[_RGB], row: int, alpha: float) -> str:
-    """Same as _row_color but faded toward black by alpha (0=black, 1=full)."""
-    t = row / (_MAX_HEIGHT - 1) if _MAX_HEIGHT > 1 else 0.0
+def _gradient_color(stops: list[_RGB], t: float, alpha: float = 1.0) -> str:
+    """Continuous gradient colour at position t (0.0=bottom, 1.0=top), optionally dimmed."""
+    t = max(0.0, min(1.0, t))
     seg = t * (len(stops) - 1)
     lo = min(int(seg), len(stops) - 2)
     frac = seg - lo
@@ -81,8 +79,13 @@ class EQVisualizer(Widget):
         super().__init__(**kwargs)
         self._theme = theme if theme in THEMES else DEFAULT_THEME
         self._show_labels = show_labels
-        self._heights = [0.0] * _BARS
-        self._targets = [0.0] * _BARS
+        self._heights = [0.0] * _BARS   # current display height
+        self._targets = [0.0] * _BARS   # simulation target
+        self._bar_peak = [0.0] * _BARS  # gravity reference peak (reset on rise)
+        self._fall_vel = [0.0] * _BARS  # accumulated fall velocity
+        self._pk_height = [0.0] * _BARS # peak indicator height
+        self._pk_hold = [0] * _BARS     # frames remaining before peak falls
+        self._pk_vel = [0.0] * _BARS    # peak indicator fall velocity
         self._energy = 0.8
         self._energy_target = 0.8
         self._bpm = DEFAULT_BPM
@@ -108,6 +111,9 @@ class EQVisualizer(Widget):
             self._advance_beat(dt)
             self._update_energy()
             self._update_targets()
+            # Decay targets toward 0 so bars fall between beat/random events
+            for i in range(_BARS):
+                self._targets[i] *= _TARGET_DECAY
 
         self._step_heights()
         self._render_bars()
@@ -142,27 +148,76 @@ class EQVisualizer(Widget):
 
     def _step_heights(self) -> None:
         for i in range(_BARS):
-            diff = self._targets[i] - self._heights[i]
-            rate = _BAND_RISE[i] if diff > 0 else _BAND_DECAY[i]
-            self._heights[i] += diff * rate
-            self._heights[i] = max(0.0, min(float(_MAX_HEIGHT), self._heights[i]))
+            if self._targets[i] > self._heights[i]:
+                # Rise: fast exponential snap (cava rises immediately; we ease slightly)
+                self._heights[i] += (self._targets[i] - self._heights[i]) * _BAND_RISE[i]
+                self._bar_peak[i] = self._heights[i]
+                self._fall_vel[i] = 0.0
+
+                # Raise peak indicator
+                if self._heights[i] > self._pk_height[i]:
+                    self._pk_height[i] = self._heights[i]
+                    self._pk_hold[i] = _PEAK_HOLD
+                    self._pk_vel[i] = 0.0
+            else:
+                # Fall: cava gravity model — velocity accumulates, bar falls parabolically
+                self._fall_vel[i] += _GRAVITY_ACCEL
+                norm = self._bar_peak[i] / _MAX_HEIGHT if _MAX_HEIGHT else 0.0
+                new_norm = norm * (1.0 - self._fall_vel[i] ** 2 * _GRAVITY_MOD)
+                self._heights[i] = max(0.0, new_norm * _MAX_HEIGHT)
+
+            # Peak indicator physics
+            if self._pk_hold[i] > 0:
+                self._pk_hold[i] -= 1
+            else:
+                self._pk_vel[i] += _PEAK_GRAVITY
+                self._pk_height[i] -= self._pk_vel[i] ** 2 * _GRAVITY_MOD * _MAX_HEIGHT
+                if self._pk_height[i] < self._heights[i]:
+                    self._pk_height[i] = self._heights[i]
+
+    def _apply_monstercat(self, heights: list[float]) -> list[float]:
+        """Horizontal smoothing: each bar is lifted toward its neighbours' heights
+        divided by MONSTERCAT^distance. Creates a smooth mountain profile."""
+        smoothed = list(heights)
+        for i in range(_BARS):
+            for j in range(_BARS):
+                dist = abs(i - j)
+                if dist > 0:
+                    contribution = heights[j] / (_MONSTERCAT ** dist)
+                    if contribution > smoothed[i]:
+                        smoothed[i] = contribution
+        return smoothed
 
     def _render_bars(self) -> None:
         stops = THEMES[self._theme]
+        display = self._apply_monstercat(self._heights)
         rows = []
 
         for row in range(_MAX_HEIGHT - 1, -1, -1):
             parts = []
             for b in range(_BARS):
-                h = self._heights[b]
-                if h >= row + 1:
-                    # Fully lit cell — colour based on row position in gradient
-                    color = _row_color(stops, row)
-                    parts.append(f"[{color}]██[/{color}] ")
+                h = display[b]
+                pk = self._pk_height[b]
+                pk_row = int(pk)
+
+                if row == pk_row and pk > h + 0.4:
+                    # Peak indicator: ▄ dimmed, colored at the peak's gradient position
+                    color = _gradient_color(stops, pk / _MAX_HEIGHT, 0.60)
+                    parts.append(f"[{color}]▄▄[/{color}] ")
+                elif h >= row + 1:
+                    # Full block: blend the lower and upper halves of the cell using ▄.
+                    # ▄ fills the bottom half in fg; background shows the top half.
+                    # This gives two gradient samples per character row, hiding seams.
+                    c_lo = _gradient_color(stops, row / _MAX_HEIGHT)
+                    c_hi = _gradient_color(stops, (row + 0.5) / _MAX_HEIGHT)
+                    parts.append(f"[{c_lo} on {c_hi}]▄▄[/] ")
                 elif h > row:
-                    # Topmost partial cell — fade by fractional height
-                    color = _row_color_faded(stops, row, h - row)
-                    parts.append(f"[{color}]██[/{color}] ")
+                    # Tip of bar: sub-block character at exact fractional height,
+                    # color at the precise bar height for a seamless gradient continuation.
+                    frac = h - row
+                    ch = _BLOCKS[max(1, round(frac * 8))]
+                    color = _gradient_color(stops, h / _MAX_HEIGHT)
+                    parts.append(f"[{color}]{ch}{ch}[/] ")
                 else:
                     parts.append("   ")
             rows.append("".join(parts))

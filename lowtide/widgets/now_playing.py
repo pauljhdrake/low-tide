@@ -12,7 +12,7 @@ from lowtide.widgets.eq_visualizer import EQVisualizer
 _LYRICS_CONTEXT = 2  # lines shown above and below the current line
 _LYRICS_TOTAL = _LYRICS_CONTEXT * 2 + 1  # 5 lines total
 _HEIGHT_COMPACT = 5
-_HEIGHT_EQ = 4 + 1   # 4 bar rows + margin-bottom
+_HEIGHT_EQ = 6 + 1   # 6 bar rows + margin-bottom
 _HEIGHT_LYRICS_EXTRA = _LYRICS_TOTAL + 1
 
 
@@ -174,10 +174,17 @@ class NowPlayingBar(Widget):
     def watch_crossfade(self, _: bool) -> None:
         self._refresh_modes()
 
+    _SHUFFLE_ICONS = {
+        0: "[dim]⇄[/dim]",
+        1: "[b]⇄[/b]",
+        2: "[b]★[/b]",
+        3: "[b]⊕[/b]",
+    }
+
     def _refresh_modes(self) -> None:
         parts = [
             "[b]♥[/b]" if self.favourited else "[dim]♡[/dim]",
-            {0: "[dim]⇄[/dim]", 1: "[b]⇄[/b]", 2: "[b]★[/b]", 3: "[b]⊕[/b]"}.get(self.shuffle_mode, "[dim]⇄[/dim]"),
+            self._SHUFFLE_ICONS.get(self.shuffle_mode, "[dim]⇄[/dim]"),
             "[b]↺[/b]" if self.repeat else "[dim]↺[/dim]",
             "[b]≋[/b]" if self.crossfade else "[dim]≋[/dim]",
         ]
