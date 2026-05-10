@@ -133,8 +133,11 @@ class TidalClient:
         return mix.items()
 
     def get_track_url(self, track) -> Optional[str]:
+        from tidalapi.exceptions import TooManyRequests
         try:
             return track.get_url()
+        except TooManyRequests:
+            raise
         except Exception:
             return None
 
@@ -154,6 +157,13 @@ class TidalClient:
             "audio_quality": getattr(track, "audio_quality", None),
             "isrc": getattr(track, "isrc", None),
         }
+
+    def get_genres(self) -> list:
+        return self.session.genre.get_genres()
+
+    def get_genre_tracks(self, genre) -> list:
+        import tidalapi.media as _media
+        return genre.items(_media.Track)
 
     def add_favourite_track(self, track_id: int) -> bool:
         try:
