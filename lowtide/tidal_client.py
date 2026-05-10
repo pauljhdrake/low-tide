@@ -123,6 +123,12 @@ class TidalClient:
     def get_artist_albums(self, artist) -> list:
         return artist.get_albums()
 
+    def get_artist_top_tracks(self, artist, limit: int = 20) -> list:
+        return artist.get_top_tracks(limit=limit)
+
+    def get_artist_ep_singles(self, artist) -> list:
+        return artist.get_ep_singles()
+
     def get_mix_tracks(self, mix) -> list:
         return mix.items()
 
