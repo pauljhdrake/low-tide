@@ -4,9 +4,10 @@ from textual import work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
-from textual.widgets import Label, ListItem, ListView
+from textual.widgets import Label, ListItem, ListView, TabPane, TabbedContent
 
 from lowtide.widgets.album_art import AlbumArt
+from lowtide.widgets.track_list import TrackList
 
 
 class ArtistScreen(Widget):
@@ -33,12 +34,12 @@ class ArtistScreen(Widget):
         color: $text-muted;
         margin-bottom: 1;
     }
-    ArtistScreen #albums-heading {
-        text-style: bold;
-        margin-bottom: 1;
+    ArtistScreen TabbedContent {
+        height: 1fr;
     }
     ArtistScreen ListView {
         height: 1fr;
+        background: transparent;
     }
     """
 
@@ -52,9 +53,14 @@ class ArtistScreen(Widget):
             yield AlbumArt(id="artist-art")
             with Vertical(id="artist-meta"):
                 yield Label(name, id="artist-name")
-        yield Label("Loading albums…", id="artist-status")
-        yield Label("Albums", id="albums-heading")
-        yield ListView(id="album-list")
+        yield Label("", id="artist-status")
+        with TabbedContent(id="artist-tabs"):
+            with TabPane("Top Tracks", id="tab-top-tracks"):
+                yield TrackList(id="top-tracks")
+            with TabPane("Albums", id="tab-albums"):
+                yield ListView(id="album-list")
+            with TabPane("EPs & Singles", id="tab-eps"):
+                yield ListView(id="ep-list")
 
     def on_mount(self) -> None:
         try:
@@ -62,22 +68,45 @@ class ArtistScreen(Widget):
         except Exception:
             art_url = None
         self.query_one(AlbumArt).load(art_url)
-        self._load()
+        self._load_top_tracks()
+        self._load_albums()
+        self._load_eps()
 
     @work(thread=True)
-    def _load(self) -> None:
+    def _load_top_tracks(self) -> None:
         try:
-            albums = self.app.client.get_artist_albums(self._artist)
-            self.app.call_from_thread(self._populate, albums)
+            tracks = self.app.client.get_artist_top_tracks(self._artist)
+            self.app.call_from_thread(self.query_one("#top-tracks", TrackList).load, tracks)
         except Exception as e:
             self.app.call_from_thread(
                 self.query_one("#artist-status", Label).update,
-                f"[red]Error: {e}[/red]",
+                f"[red]Error loading tracks: {e}[/red]",
             )
 
-    def _populate(self, albums: list) -> None:
-        self.query_one("#artist-status", Label).update("")
-        lv = self.query_one("#album-list", ListView)
+    @work(thread=True)
+    def _load_albums(self) -> None:
+        try:
+            albums = self.app.client.get_artist_albums(self._artist)
+            self.app.call_from_thread(self._populate_albums, "#album-list", albums)
+        except Exception as e:
+            self.app.call_from_thread(
+                self.query_one("#artist-status", Label).update,
+                f"[red]Error loading albums: {e}[/red]",
+            )
+
+    @work(thread=True)
+    def _load_eps(self) -> None:
+        try:
+            eps = self.app.client.get_artist_ep_singles(self._artist)
+            self.app.call_from_thread(self._populate_albums, "#ep-list", eps)
+        except Exception as e:
+            self.app.call_from_thread(
+                self.query_one("#artist-status", Label).update,
+                f"[red]Error loading EPs: {e}[/red]",
+            )
+
+    def _populate_albums(self, list_id: str, albums: list) -> None:
+        lv = self.query_one(list_id, ListView)
         lv.clear()
         for album in albums:
             name = getattr(album, "name", "?")
@@ -87,6 +116,12 @@ class ArtistScreen(Widget):
             item = ListItem(Label(f"{name}  {suffix}"))
             item._album = album
             lv.append(item)
+
+    def on_track_list_track_selected(self, event: TrackList.TrackSelected) -> None:
+        self.app.enqueue_and_play(self.query_one(TrackList).tracks, start_index=event.index)
+
+    def on_track_list_track_append_requested(self, event: TrackList.TrackAppendRequested) -> None:
+        self.app.append_to_queue([event.track])
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
         album = getattr(event.item, "_album", None)
