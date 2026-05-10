@@ -26,6 +26,9 @@ class ArtistScreen(Widget):
         height: 9;
         margin-right: 2;
     }
+    ArtistScreen #artist-meta {
+        height: auto;
+    }
     ArtistScreen #artist-name {
         text-style: bold;
         padding-top: 1;
