@@ -416,7 +416,7 @@ class LowTideApp(App):
 
     # --- Open objects (albums, artists, mixes, playlists) by type ---
 
-    def open_object(self, obj) -> None:
+    async def open_object(self, obj) -> None:
         """Route any tidalapi object to the appropriate screen."""
         from lowtide.screens.album import AlbumScreen
         from lowtide.screens.artist import ArtistScreen
@@ -425,16 +425,15 @@ class LowTideApp(App):
         type_name = type(obj).__name__.lower()
 
         if "album" in type_name:
-            asyncio.ensure_future(self.push_view(AlbumScreen(obj)))
+            await self.push_view(AlbumScreen(obj))
         elif "artist" in type_name:
-            asyncio.ensure_future(self.push_view(ArtistScreen(obj)))
+            await self.push_view(ArtistScreen(obj))
         elif "playlist" in type_name or "userplaylist" in type_name:
-            asyncio.ensure_future(self.push_view(PlaylistScreen(obj)))
+            await self.push_view(PlaylistScreen(obj))
         elif "mix" in type_name:
-            asyncio.ensure_future(self.push_view(PlaylistScreen(obj, autoplay=True)))
+            await self.push_view(PlaylistScreen(obj, autoplay=True))
         else:
-            # Fallback: try playlist-style tracks() call
-            asyncio.ensure_future(self.push_view(PlaylistScreen(obj)))
+            await self.push_view(PlaylistScreen(obj))
 
     # --- Navigation ---
 

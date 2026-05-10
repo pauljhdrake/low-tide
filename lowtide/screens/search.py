@@ -99,11 +99,11 @@ class SearchScreen(Widget):
     def on_track_list_track_append_requested(self, event: TrackList.TrackAppendRequested) -> None:
         self.app.append_to_queue([event.track])
 
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
+    async def on_list_view_selected(self, event: ListView.Selected) -> None:
         album = getattr(event.item, "_album", None)
         if album:
-            self.app.open_object(album)
+            await self.app.open_object(album)
             return
         artist = getattr(event.item, "_artist", None)
         if artist:
-            self.app.open_object(artist)
+            await self.app.open_object(artist)

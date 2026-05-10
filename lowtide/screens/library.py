@@ -134,9 +134,9 @@ class LibraryScreen(Widget):
         # For You item
         obj = getattr(event.item, "_obj", None)
         if obj:
-            self.app.open_object(obj)
+            await self.app.open_object(obj)
             return
         # Mix
         mix = getattr(event.item, "_mix", None)
         if mix:
-            self.app.open_object(mix)
+            await self.app.open_object(mix)

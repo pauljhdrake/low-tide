@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import asyncio
-
 from textual import work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Label, ListItem, ListView
 
@@ -91,8 +88,8 @@ class ArtistScreen(Widget):
             item._album = album
             lv.append(item)
 
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
+    async def on_list_view_selected(self, event: ListView.Selected) -> None:
         album = getattr(event.item, "_album", None)
         if album:
             from lowtide.screens.album import AlbumScreen
-            asyncio.ensure_future(self.app.push_view(AlbumScreen(album)))
+            await self.app.push_view(AlbumScreen(album))
