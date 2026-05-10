@@ -39,6 +39,7 @@ _NAV_BASE = [
     ("search", "Search"),
     ("favorites", "Favorites"),
     ("ride-the-tide", "Ride the Tide"),
+    ("genre-radio", "Genre Radio"),
 ]
 
 
@@ -460,16 +461,30 @@ class LowTideApp(App):
 
     @work(thread=True)
     def _load_queue(self, tracks: list, gen: int) -> None:
+        import time
+        from tidalapi.exceptions import TooManyRequests
         for i, track in enumerate(tracks):
             if self._queue_gen != gen:
                 return
-            url = self.client.get_track_url(track)
+            try:
+                url = self.client.get_track_url(track)
+            except TooManyRequests as e:
+                wait = e.retry_after
+                msg = (
+                    f"TIDAL rate limit – try again in {wait}s"
+                    if wait > 0
+                    else "TIDAL rate limit – try again in a moment"
+                )
+                self.call_from_thread(lambda m=msg: self.notify(m, severity="error", timeout=12))
+                return
             if not url or self._queue_gen != gen:
                 continue
             if i == 0:
                 self.call_from_thread(self._play_if_current, url, gen, track)
             else:
                 self.call_from_thread(self._append_if_current, url, gen)
+                # Buffer first 3 tracks quickly; throttle the rest to avoid rate limits
+                time.sleep(0.15 if i < 3 else 0.5)
         if self._queue_gen == gen:
             self.call_from_thread(
                 lambda: self.query_one(QueuePanel).refresh_queue(self._queue, self._current_idx)
@@ -487,12 +502,25 @@ class LowTideApp(App):
 
     @work(thread=True)
     def _append_tracks(self, tracks: list, gen: int) -> None:
+        import time
+        from tidalapi.exceptions import TooManyRequests
         for track in tracks:
             if self._queue_gen != gen:
                 return
-            url = self.client.get_track_url(track)
+            try:
+                url = self.client.get_track_url(track)
+            except TooManyRequests as e:
+                wait = e.retry_after
+                msg = (
+                    f"TIDAL rate limit – try again in {wait}s"
+                    if wait > 0
+                    else "TIDAL rate limit – try again in a moment"
+                )
+                self.call_from_thread(lambda m=msg: self.notify(m, severity="error", timeout=12))
+                return
             if url:
                 self.call_from_thread(self._append_if_current, url, gen)
+                time.sleep(0.3)
 
     def on_track_list_track_append_requested(self, event) -> None:
         self.append_to_queue([event.track])
@@ -555,6 +583,8 @@ class LowTideApp(App):
                 await self._open_favorites()
             elif key == "ride-the-tide":
                 await self._open_ride_the_tide()
+            elif key == "genre-radio":
+                await self._open_genre_radio()
             elif key == "local":
                 await self._open_local()
 
@@ -569,6 +599,10 @@ class LowTideApp(App):
     async def on_track_list_track_radio_requested(self, event) -> None:
         from lowtide.screens.radio import RadioScreen
         await self.push_view(RadioScreen(seed_track=event.track))
+
+    async def _open_genre_radio(self) -> None:
+        from lowtide.screens.genre import GenreScreen
+        await self._switch_root(GenreScreen(), "genre-radio")
 
     async def _open_local(self) -> None:
         from lowtide.screens.local import LocalLibraryScreen

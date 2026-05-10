@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -65,6 +66,52 @@ class Recommender:
         if self.has_lastfm:
             return self._lastfm_ride_the_tide(n), None
         return self._fallback_ride_the_tide(n), _LASTFM_NUDGE
+
+    def build_genre_playlist(self, genre: str, n: int = 20) -> tuple[list, str | None]:
+        """
+        Build a playlist for a given Last.fm tag/genre.
+        Returns (tidal_tracks, nudge_message_or_None).
+        """
+        if self.has_lastfm:
+            return self._lastfm_genre_playlist(genre, n), None
+        return self._fallback_genre_playlist(genre, n), _LASTFM_NUDGE
+
+    # ── Last.fm: genre playlist ───────────────────────────────────────────
+
+    def _lastfm_genre_playlist(self, genre: str, n: int) -> list:
+        tag = self._network.get_tag(genre)
+        candidates: dict[tuple[str, str], float] = {}
+
+        # Direct: top tracks for this tag (highest signal)
+        try:
+            for item in tag.get_top_tracks(limit=50):
+                a = getattr(item.item, "artist", None)
+                a_name = getattr(a, "name", "") if a else ""
+                t_name = getattr(item.item, "title", "") or ""
+                if a_name and t_name:
+                    candidates[(a_name, t_name)] = float(item.weight or 1)
+        except Exception as e:
+            log.debug("genre playlist: top tracks failed for %s: %s", genre, e)
+
+        # Broader: top artists for this tag → their top tracks
+        try:
+            for item in tag.get_top_artists(limit=15):
+                a_name = getattr(item.item, "name", "") or ""
+                artist_weight = float(item.weight or 1) * 0.6
+                try:
+                    for tt in item.item.get_top_tracks(limit=3):
+                        t_name = getattr(tt.item, "title", "") or ""
+                        if not t_name:
+                            continue
+                        key = (a_name, t_name)
+                        if key not in candidates or candidates[key] < artist_weight:
+                            candidates[key] = artist_weight
+                except Exception:
+                    pass
+        except Exception as e:
+            log.debug("genre playlist: top artists failed for %s: %s", genre, e)
+
+        return self._score_and_resolve(candidates, {genre.lower()}, n)
 
     # ── Last.fm: track radio ──────────────────────────────────────────────
 
@@ -200,6 +247,7 @@ class Recommender:
             track = self._client.resolve_track(a_name, t_name)
             if track:
                 results.append(track)
+            time.sleep(0.1)
 
         return results
 
@@ -259,6 +307,15 @@ class Recommender:
 
         results.sort(key=lambda x: -x[1])
         return [t for t, _ in results[:n]]
+
+    def _fallback_genre_playlist(self, genre: str, n: int) -> list:
+        """Without Last.fm: TIDAL keyword search for the genre string."""
+        try:
+            results = self._client.search(genre, limit=50)
+            return (results.get("tracks") or [])[:n]
+        except Exception as e:
+            log.debug("fallback genre playlist failed: %s", e)
+            return []
 
     def _fallback_from_favourites(self, n: int) -> list:
         """Cold-start fallback: return a random sample of TIDAL favourites."""

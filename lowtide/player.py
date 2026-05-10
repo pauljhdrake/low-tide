@@ -17,6 +17,7 @@ MPV_BASE_ARGS = [
     f"--input-ipc-server={SOCKET_PATH}",
     "--really-quiet",
     "--prefetch-playlist=yes",
+    "--gapless-audio=yes",
 ]
 
 
