@@ -40,6 +40,7 @@ _NAV_BASE = [
     ("favorites", "Favorites"),
     ("ride-the-tide", "Ride the Tide"),
     ("genre-radio", "Genre Radio"),
+    ("listening-journey", "Listening Journey"),
 ]
 
 
@@ -273,8 +274,10 @@ class LowTideApp(App):
         self.scrobbler = Scrobbler(cfg)
         from lowtide.tidal_client import CONF_DIR
         from lowtide.recommender import Recommender
+        from lowtide.scrobble_store import ScrobbleStore
         store_path = os.path.join(CONF_DIR, "playcounts.json")
         self._play_count_store = PlayCountStore(store_path)
+        self._scrobble_store = ScrobbleStore(os.path.join(CONF_DIR, "scrobbles.json"))
         self.scrobbler.on_scrobble.append(self._play_count_store.increment)
         self.recommender = Recommender(
             network=self.scrobbler._network,
@@ -585,8 +588,14 @@ class LowTideApp(App):
                 await self._open_ride_the_tide()
             elif key == "genre-radio":
                 await self._open_genre_radio()
+            elif key == "listening-journey":
+                await self._open_journey()
             elif key == "local":
                 await self._open_local()
+
+    async def _open_journey(self) -> None:
+        from lowtide.screens.journey import JourneyScreen
+        await self._switch_root(JourneyScreen(), "listening-journey")
 
     async def _open_favorites(self) -> None:
         from lowtide.screens.favorites import FavoritesScreen
