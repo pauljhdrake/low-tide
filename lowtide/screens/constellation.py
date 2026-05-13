@@ -121,7 +121,7 @@ class ConstellationScreen(Widget):
     def compose(self) -> ComposeResult:
         with Vertical():
             with Horizontal():
-                yield Tree("Artists", id="const-tree", show_root=False)
+                yield Tree("Artists", id="const-tree")
                 yield _InfoPanel(id="info-panel")
             yield Label("Loading…", id="const-status")
 
@@ -129,6 +129,7 @@ class ConstellationScreen(Widget):
         self._artist_plays: dict[str, int] = {}  # name.lower() → total plays
         self._top_names: list[str] = []           # original-case names in rank order
         self._highlighted = None
+        self.query_one("#const-tree", Tree).show_root = False
         self._load_top_artists()
 
     # ── Data loading ──────────────────────────────────────────────────────────
