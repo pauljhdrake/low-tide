@@ -40,6 +40,7 @@ _NAV_BASE = [
     ("favorites", "Favorites"),
     ("ride-the-tide", "Ride the Tide"),
     ("genre-radio", "Genre Radio"),
+    ("constellation", "Constellation"),
 ]
 
 
@@ -585,6 +586,8 @@ class LowTideApp(App):
                 await self._open_ride_the_tide()
             elif key == "genre-radio":
                 await self._open_genre_radio()
+            elif key == "constellation":
+                await self._open_constellation()
             elif key == "local":
                 await self._open_local()
 
@@ -603,6 +606,10 @@ class LowTideApp(App):
     async def _open_genre_radio(self) -> None:
         from lowtide.screens.genre import GenreScreen
         await self._switch_root(GenreScreen(), "genre-radio")
+
+    async def _open_constellation(self) -> None:
+        from lowtide.screens.constellation import ConstellationScreen
+        await self._switch_root(ConstellationScreen(), "constellation")
 
     async def _open_local(self) -> None:
         from lowtide.screens.local import LocalLibraryScreen
