@@ -44,6 +44,7 @@ class HeatmapCanvas(Widget):
         Binding("right", "scroll_right", show=False),
         Binding("enter", "open_artist",  show=False),
         Binding("r",     "radio",        show=False),
+        Binding("g",     "toggle_scale", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -76,6 +77,8 @@ class HeatmapCanvas(Widget):
         self._artists: list[str] = []
         self._monthly: dict[str, dict[tuple[int, int], int]] = {}
         self._months: list[tuple[int, int]] = []
+        self._global_peak: int = 1
+        self._global_scale: bool = False
         self._col_offset = 0
         self._selected = 0
         self._row_offset = 0
@@ -89,6 +92,10 @@ class HeatmapCanvas(Widget):
         self._artists = artists
         self._monthly = monthly
         self._months = months
+        self._global_peak = max(
+            (max(v.values(), default=0) for v in monthly.values()),
+            default=1,
+        )
         self._col_offset = max(0, len(months) - self._n_cols())
         self._selected = 0
         self._row_offset = 0
@@ -135,7 +142,7 @@ class HeatmapCanvas(Widget):
             out.append(" │ ", style=f"dim{sfx}")
 
             data = self._monthly.get(artist, {})
-            peak = max(data.values(), default=1)
+            peak = self._global_peak if self._global_scale else max(data.values(), default=1)
 
             for y, m in months:
                 char, style = _cell(data.get((y, m), 0), peak)
@@ -176,6 +183,23 @@ class HeatmapCanvas(Widget):
             self.refresh()
             self._emit_range()
 
+    def action_toggle_scale(self) -> None:
+        self._global_scale = not self._global_scale
+        self.refresh()
+        self.post_message(HeatmapCanvas.RangeChanged(
+            self._current_range_label() +
+            ("  [dim]│ absolute scale[/dim]" if self._global_scale else "  [dim]│ per-artist scale[/dim]")
+        ))
+
+    def _current_range_label(self) -> str:
+        if not self._months:
+            return ""
+        visible = self._months[self._col_offset : self._col_offset + self._n_cols()]
+        if not visible:
+            return ""
+        s, e = visible[0], visible[-1]
+        return f"{calendar.month_abbr[s[1]]} {s[0]} – {calendar.month_abbr[e[1]]} {e[0]}"
+
     def action_open_artist(self) -> None:
         if self._artists:
             self.post_message(HeatmapCanvas.ArtistSelected(self._artists[self._selected]))
@@ -185,16 +209,10 @@ class HeatmapCanvas(Widget):
             self.post_message(HeatmapCanvas.RadioRequested(self._artists[self._selected]))
 
     def _emit_range(self) -> None:
-        if not self._months:
-            return
-        visible = self._months[self._col_offset : self._col_offset + self._n_cols()]
-        if visible:
-            s, e = visible[0], visible[-1]
-            label = (
-                f"{calendar.month_abbr[s[1]]} {s[0]} – "
-                f"{calendar.month_abbr[e[1]]} {e[0]}"
-            )
-            self.post_message(HeatmapCanvas.RangeChanged(label))
+        label = self._current_range_label()
+        if label:
+            scale = "absolute" if self._global_scale else "per-artist"
+            self.post_message(HeatmapCanvas.RangeChanged(f"{label}  [dim]│ {scale} scale[/dim]"))
 
 
 class JourneyScreen(Widget):
@@ -331,7 +349,7 @@ class JourneyScreen(Widget):
                 f"[dim]{calendar.month_abbr[s[1]]} {s[0]} – "
                 f"{calendar.month_abbr[e[1]]} {e[0]}  ·  "
                 f"{len(scrobbles):,} scrobbles  ·  "
-                f"↑↓ artist  ·  ←→ scroll  ·  Enter open  ·  R radio[/dim]"
+                f"↑↓ artist  ·  ←→ scroll  ·  G toggle scale  ·  Enter open  ·  R radio[/dim]"
             )
 
     # ── Canvas events ─────────────────────────────────────────────────────
