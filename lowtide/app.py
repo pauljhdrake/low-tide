@@ -36,7 +36,7 @@ def _now_playing_title(track) -> str:
     artist = getattr(getattr(track, "artist", None), "name", "") or ""
     title = getattr(track, "name", "") or ""
     if artist and title:
-        return f"{artist} — {title}"
+        return f"{artist} – {title}"
     return title or artist or "Unknown"
 
 
@@ -413,7 +413,7 @@ class LowTideApp(App):
             self._load_track_extras(track)
             if self._macos_now_playing:
                 await self._set_mpv_title(_now_playing_title(track))
-                asyncio.ensure_future(self._set_macos_album_art(track))
+                await self._set_macos_album_art(track)
 
     def _set_current_track(self, track) -> None:
         self._current_track = track
@@ -708,7 +708,7 @@ class LowTideApp(App):
         if not art_url:
             return
 
-        path = await asyncio.get_event_loop().run_in_executor(
+        path = await asyncio.get_running_loop().run_in_executor(
             None, self._download_album_art, art_url,
         )
         if not path:

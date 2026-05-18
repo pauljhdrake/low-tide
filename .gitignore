@@ -26,5 +26,6 @@ dist/
 uv.lock
 
 # TIDAL session tokens — never commit credentials
+-/
 ~/.config/low-tide/
 CLAUDE.md
