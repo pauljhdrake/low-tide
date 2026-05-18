@@ -106,8 +106,8 @@ class TidalClient:
     def get_favorite_tracks(self) -> list:
         return self.session.user.favorites.tracks_paginated()
 
-    def get_favorite_albums(self) -> list:
-        return self.session.user.favorites.albums_paginated()
+    def get_favorite_albums(self, order=None, order_direction=None) -> list:
+        return self.session.user.favorites.albums_paginated(order=order, order_direction=order_direction)
 
     def get_favorite_artists(self) -> list:
         return self.session.user.favorites.artists_paginated()
