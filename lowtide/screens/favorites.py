@@ -5,12 +5,23 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widget import Widget
 from textual.widgets import Label, ListItem, ListView, TabPane, TabbedContent
+from tidalapi.user import AlbumOrder, OrderDirection
 
 from lowtide.widgets.track_list import TrackList
 
+_ALBUM_SORTS = [
+    (AlbumOrder.Name,        OrderDirection.Ascending,  "Name"),
+    (AlbumOrder.DateAdded,   OrderDirection.Descending, "Date added"),
+    (AlbumOrder.ReleaseDate, OrderDirection.Descending, "Release date"),
+    (AlbumOrder.Artist,      OrderDirection.Ascending,  "Artist"),
+]
+
 
 class FavoritesScreen(Widget):
-    BINDINGS = [Binding("A", "append_all", "Add all to queue", show=False)]
+    BINDINGS = [
+        Binding("A", "append_all", "Add all to queue", show=False),
+        Binding("S", "cycle_album_sort", "Sort albums"),
+    ]
 
     DEFAULT_CSS = """
     FavoritesScreen {
@@ -44,6 +55,7 @@ class FavoritesScreen(Widget):
                 yield ListView(id="fav-artists")
 
     def on_mount(self) -> None:
+        self._album_sort_idx = 0
         self._load_tracks()
         self._load_albums()
         self._load_artists()
@@ -83,18 +95,19 @@ class FavoritesScreen(Widget):
 
     @work(thread=True)
     def _load_albums(self) -> None:
+        order, direction, label = _ALBUM_SORTS[self._album_sort_idx]
         try:
-            albums = self.app.client.get_favorite_albums()
-            self.app.call_from_thread(self._populate_albums, albums)
+            albums = self.app.client.get_favorite_albums(order=order, order_direction=direction)
+            self.app.call_from_thread(self._populate_albums, albums, label)
         except Exception as e:
             self.app.call_from_thread(
                 self.query_one("#status-fav-albums", Label).update,
                 f"[red]Error: {e}[/red]",
             )
 
-    def _populate_albums(self, albums: list) -> None:
+    def _populate_albums(self, albums: list, sort_label: str) -> None:
         self.query_one("#status-fav-albums", Label).update(
-            f"[dim]{len(albums)} saved albums[/dim]"
+            f"[dim]{len(albums)} saved albums  •  sorted by: {sort_label}[/dim]"
         )
         lv = self.query_one("#fav-albums", ListView)
         lv.clear()
@@ -107,6 +120,12 @@ class FavoritesScreen(Widget):
             item = ListItem(Label(label))
             item._album = album
             lv.append(item)
+
+    def action_cycle_album_sort(self) -> None:
+        self._album_sort_idx = (self._album_sort_idx + 1) % len(_ALBUM_SORTS)
+        self.query_one("#status-fav-albums", Label).update("[dim]Loading…[/dim]")
+        self.query_one("#fav-albums", ListView).clear()
+        self._load_albums()
 
     # ── Artists ───────────────────────────────────────────────────────────
 
