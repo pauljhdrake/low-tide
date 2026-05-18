@@ -17,6 +17,7 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 
 ### Playback
 - Full audio playback via `mpv` – no browser, no Electron
+- Gapless playback – tracks are pre-buffered so there is no gap between them
 - Four shuffle modes: off, random, favourites (weight by play count), and discovery (surface unplayed tracks) – press `s` to cycle
 - Repeat and crossfade (with configurable fade duration)
 - ReplayGain normalisation – album or track mode via mpv
@@ -25,16 +26,25 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 
 ### Discovery and radio
 - **Track radio** – press `R` on any track to build a 25-track radio seeded from that track using Last.fm similarity data, artist tag matching, and your play history
+- **Genre Radio** – browse TIDAL's curated genre catalogue or type any Last.fm tag (e.g. `shoegaze`, `drum and bass`) to build a genre playlist
 - **Ride the Tide** – personalised recommendations from the sidebar, built from your overall listening history across TIDAL, Last.fm, and Spotify; no seed track required
-- Both modes work without Last.fm using play count data alone, with a prompt to configure it for richer results
+- All radio modes work without Last.fm using play count data alone, with a prompt to configure it for richer results
 
 ### Library and browsing
 - Browse playlists, mixes, and TIDAL's For You recommendations
 - Favourites browser with separate tabs for saved tracks, albums, and artists – full library, not capped at 50
+- Sort favourite albums by name, date added, release date, or artist – press `S` to cycle
 - Search tracks, albums, and artists
-- Album and artist drill-down views
+- Album and artist drill-down views with bio tab (artist description from TIDAL)
 - Love / unlove tracks – syncs with TIDAL favourites
 - Local library – browse and play locally stored files (FLAC, MP3, OPUS, OGG, M4A); metadata read via mutagen, library cached for fast startup
+
+### Listening Journey
+- Heatmap of your Last.fm scrobble history, organised by artist (rows) and month (columns)
+- Top 25 artists by total scrobbles shown; scroll left/right through time
+- Press `G` to toggle between per-artist and absolute scale
+- Press `Enter` on an artist to open their page; press `R` to start a radio from them
+- Requires Last.fm to be configured (see [Configuration](#configuration))
 
 ### Queue
 - Add tracks to the queue without interrupting playback – press `a` on any track to add it, or `A` to add the entire album, playlist, or favourites list
@@ -133,11 +143,13 @@ The source code for token handling is in [`lowtide/tidal_client.py`](lowtide/tid
 | `p` | Previous track |
 | `]` / `[` | Volume up / down |
 | `s` | Cycle shuffle mode (off → random → favourites → discovery) |
+| `S` | Cycle favourite album sort order (name → date added → release date → artist) |
 | `e` | Toggle EQ visualiser |
 | `r` | Toggle repeat |
 | `l` | Love / unlove current track |
 | `x` | Toggle crossfade |
 | `R` | Start radio from focused track |
+| `G` | Toggle heatmap scale (Listening Journey) |
 | `a` | Add focused track to queue |
 | `A` | Add all tracks in current view to queue |
 | `q` | Toggle queue panel |
@@ -245,9 +257,10 @@ lowtide/
   player.py            # mpv IPC control
   scrobbler.py         # Last.fm scrobbling
   play_count_store.py  # play count persistence and weighted shuffle
+  scrobble_store.py    # Last.fm scrobble history cache (used by Listening Journey)
   app.py               # app layout: sidebar, content area, queue panel
   recommender.py       # Last.fm-powered radio and Ride the Tide logic
-  screens/             # library, search, playlist, album, artist, favorites, radio
+  screens/             # library, search, playlist, album, artist, favorites, radio, genre, journey
   widgets/             # now_playing bar, track list table, album art, EQ visualiser
 ```
 
