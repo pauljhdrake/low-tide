@@ -117,7 +117,12 @@ class Player:
         self._pending[req_id] = fut
         msg = json.dumps({"command": command, "request_id": req_id}) + "\n"
         self._writer.write(msg.encode())
-        await self._writer.drain()
+        try:
+            await self._writer.drain()
+        except (ConnectionResetError, BrokenPipeError, OSError):
+            self._pending.pop(req_id, None)
+            fut.cancel()
+            return None
         if wait:
             try:
                 return await asyncio.wait_for(asyncio.shield(fut), timeout=3.0)

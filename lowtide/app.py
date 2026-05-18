@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 from typing import Optional
 
 log = logging.getLogger(__name__)
@@ -28,6 +29,23 @@ from lowtide.tidal_client import TidalClient
 from lowtide.widgets.album_art import AlbumArt
 from lowtide.widgets.eq_visualizer import EQVisualizer
 from lowtide.widgets.now_playing import NowPlayingBar
+
+
+def _now_playing_title(track) -> str:
+    """Format track metadata for mpv's force-media-title (macOS Now Playing)."""
+    artist = getattr(getattr(track, "artist", None), "name", "") or ""
+    title = getattr(track, "name", "") or ""
+    if artist and title:
+        return f"{artist} – {title}"
+    return title or artist or "Unknown"
+
+
+def _try_unlink(path: str) -> None:
+    """Remove a file, ignoring errors."""
+    try:
+        os.unlink(path)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +325,10 @@ class LowTideApp(App):
         self._crossfading: bool = False
         self._ride_the_tide_cache: tuple[list, str | None] | None = None
 
+        # macOS: push track title to mpv's Now Playing widget
+        self._macos_now_playing = sys.platform == "darwin"
+        self._macos_art_temp_path: str | None = None
+
     def compose(self) -> ComposeResult:
         with Horizontal(id="main"):
             yield Sidebar(nav=self._nav)
@@ -392,6 +414,9 @@ class LowTideApp(App):
             self.query_one(QueuePanel).refresh_queue(self._queue, self._current_idx)
             self.scrobbler.track_started(track)
             self._load_track_extras(track)
+            if self._macos_now_playing:
+                await self._set_mpv_title(_now_playing_title(track))
+                await self._set_macos_album_art(track)
 
     def _set_current_track(self, track) -> None:
         self._current_track = track
@@ -482,6 +507,7 @@ class LowTideApp(App):
                 return
             if not url or self._queue_gen != gen:
                 continue
+
             if i == 0:
                 self.call_from_thread(self._play_if_current, url, gen, track)
             else:
@@ -671,6 +697,70 @@ class LowTideApp(App):
     async def action_toggle_pause(self) -> None:
         await self.player.toggle_pause()
 
+    async def _set_mpv_title(self, title: str) -> None:
+        """Set force-media-title via mpv IPC (macOS Now Playing widget)."""
+        await self.player._cmd(["set_property", "force-media-title", title])
+
+    async def _set_macos_album_art(self, track) -> None:
+        """Download album art and add as external video track for macOS Now Playing.
+
+        mpv v0.41.0+ detects external image tracks in the track list and
+        populates MPMediaItemPropertyArtwork in MPNowPlayingInfoCenter.
+        """
+        if not self._macos_now_playing:
+            return
+
+        try:
+            art_url = track.album.image(320)
+        except Exception:
+            return
+        if not art_url:
+            return
+
+        path = await asyncio.get_running_loop().run_in_executor(
+            None, self._download_album_art, art_url,
+        )
+        if not path:
+            return
+
+        # Track may have advanced while we were downloading
+        if self._current_track is not track:
+            _try_unlink(path)
+            return
+
+        # Clean up previous temp file
+        self._cleanup_macos_art_temp()
+        self._macos_art_temp_path = path
+
+        # Add the cover as an external video track. mpv's macOS backend
+        # detects it via track-list and forwards it to MPNowPlayingInfoCenter.
+        await self.player._cmd(["video-add", path])
+        # Deselect the video track to suppress the floating window on macOS.
+        # The track stays in the track list for the macOS backend to detect.
+        await self.player._cmd(["set_property", "vid", "no"])
+
+    def _download_album_art(self, url: str) -> str | None:
+        """Return local path to downloaded album art, or None."""
+        import tempfile
+
+        import requests
+
+        try:
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            fd, path = tempfile.mkstemp(suffix=".jpg", prefix="lowtide-art-")
+            os.close(fd)
+            with open(path, "wb") as f:
+                f.write(resp.content)
+            return path
+        except Exception:
+            return None
+
+    def _cleanup_macos_art_temp(self) -> None:
+        if self._macos_art_temp_path:
+            _try_unlink(self._macos_art_temp_path)
+            self._macos_art_temp_path = None
+
     async def action_next_track(self) -> None:
         mode = self.player.shuffle_mode
         if mode in (SHUFFLE_FAVOURITE, SHUFFLE_DISCOVERY) and self._current_idx >= 0 and self._queue:
@@ -819,5 +909,6 @@ class LowTideApp(App):
     async def on_unmount(self) -> None:
         self._save_queue()
         self._play_count_store.save()
+        self._cleanup_macos_art_temp()
         await self.mpris.stop()
         await self.player.shutdown()
