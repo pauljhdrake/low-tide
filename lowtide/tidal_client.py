@@ -85,6 +85,7 @@ class TidalClient:
 
     def resolve_track(self, artist: str, title: str):
         """Search TIDAL for a track by artist + title. Returns the best match or None."""
+        import difflib
         import re
         import unicodedata
 
@@ -92,12 +93,14 @@ class TidalClient:
             return re.sub(r"[^\w\s]", "", s.lower())
 
         def _fold(s: str) -> str:
-            """Strip diacritics then punctuation – catches e.g. Ndeg\xe9ocello vs Ndegeocello."""
             s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
             return re.sub(r"[^\w\s]", "", s.lower())
 
         def _match(a: str, b: str) -> bool:
             return a in b or b in a
+
+        def _fuzzy(a: str, b: str) -> bool:
+            return difflib.SequenceMatcher(None, a, b).ratio() >= 0.82
 
         def _candidates(query: str) -> list:
             try:
@@ -106,13 +109,13 @@ class TidalClient:
                 return []
 
         def _find(tracks: list) -> object:
-            a_low, a_norm, a_fold = artist.lower(), _norm(artist), _fold(artist)
+            a_fold = _fold(artist)
             t_low, t_norm, t_fold = title.lower(), _norm(title), _fold(title)
             for track in tracks:
                 r_artist = getattr(getattr(track, "artist", None), "name", "").lower()
                 r_title = getattr(track, "name", "").lower()
-                artist_ok = (_match(a_low, r_artist) or _match(a_norm, _norm(r_artist))
-                             or _match(a_fold, _fold(r_artist)))
+                artist_ok = (_match(artist.lower(), r_artist) or _match(_norm(artist), _norm(r_artist))
+                             or _match(a_fold, _fold(r_artist)) or _fuzzy(a_fold, _fold(r_artist)))
                 title_ok = (_match(t_low, r_title) or _match(t_norm, _norm(r_title))
                             or _match(t_fold, _fold(r_title)))
                 if artist_ok and title_ok:
