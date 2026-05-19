@@ -38,6 +38,7 @@ _NAV_BASE = [
     ("library", "Library"),
     ("search", "Search"),
     ("favorites", "Favorites"),
+    ("new-for-you", "New For You"),
     ("ride-the-tide", "Ride the Tide"),
     ("genre-radio", "Genre Radio"),
     ("listening-journey", "Listening Journey"),
@@ -584,6 +585,8 @@ class LowTideApp(App):
                 await self.action_focus_search()
             elif key == "favorites":
                 await self._open_favorites()
+            elif key == "new-for-you":
+                await self._open_new_for_you()
             elif key == "ride-the-tide":
                 await self._open_ride_the_tide()
             elif key == "genre-radio":
@@ -600,6 +603,10 @@ class LowTideApp(App):
     async def _open_favorites(self) -> None:
         from lowtide.screens.favorites import FavoritesScreen
         await self._switch_root(FavoritesScreen(), "favorites")
+
+    async def _open_new_for_you(self) -> None:
+        from lowtide.screens.new_for_you import NewForYouScreen
+        await self._switch_root(NewForYouScreen(), "new-for-you")
 
     async def _open_ride_the_tide(self) -> None:
         from lowtide.screens.radio import RadioScreen
