@@ -59,25 +59,48 @@ class _LiExtractor(HTMLParser):
 
 # ── Track line parsing ────────────────────────────────────────────────────────
 
-# 'Title' by Artist  or  "Title" by Artist  (handles smart quotes too)
-_QUOTED = re.compile(r"^[‘’“”'\"](.*?)[‘’“”'\"]\s+by\s+(.+)$")
-_UNQUOTED = re.compile(r"^(.+?)\s+by\s+(.+)$")
+# Separator alternatives (tried in order — “- by” must precede bare “-”):
+#   “ - by “   →  “Runaway - by Nuyorican Soul”
+#   “ by “     →  standard
+#   “ - “ / “ – “  →  dash-separated episodes
+_SEP = r”(?:\s*[-–]\s+by\s+|\s+by\s+|\s*[-–]\s+)”
 
-# Best-effort: playlist name in a <strong> tag after "playlist is called"
+# ‘Title’ by/- Artist  or  “Title” by/- Artist  (handles smart/curly quotes too)
+_QUOTED = re.compile(r”^[‘’””’\”](.+?)[‘’””’\”]” + _SEP + r”(.+)$”)
+_UNQUOTED = re.compile(r”^(.+?)” + _SEP + r”(.+)$”)
+
+# Best-effort: playlist name in a <strong> tag after “playlist is called”
 _PLAYLIST_NAME = re.compile(
-    r"playlist is called\s*<[^>]+>\s*['"'\"](.+?)['"'\"]",
+    r”playlist is called\s*<[^>]+>\s*[‘”’\”](.+?)[‘”’\”]”,
     re.IGNORECASE,
 )
 
 
+def _clean_artist(artist: str) -> str:
+    “””Strip featuring clauses that aren’t the main artist name.”””
+    # “featuring X - RealArtist” (main artist at end after last dash)
+    m = re.match(r”^featuring\s+.+[-–]\s*(.+)$”, artist, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    # “RealArtist - featuring X”
+    cleaned = re.sub(r”\s*[-–]\s*featuring\s+.+$”, “”, artist, flags=re.IGNORECASE)
+    return cleaned.strip()
+
+
+_QUOTE_CHARS = “''\”\”'\””
+
+
 def _parse_track_line(text: str) -> tuple[str, str] | None:
-    """Return (title, artist) or None."""
-    m = _QUOTED.match(text.strip())
-    if m:
-        return m.group(1).strip(), m.group(2).strip()
-    m = _UNQUOTED.match(text.strip())
-    if m:
-        return m.group(1).strip(), m.group(2).strip()
+    “””Return (title, artist) or None.”””
+    text = text.replace(“\xa0”, “ “).strip()
+    for pattern in (_QUOTED, _UNQUOTED):
+        m = pattern.match(text)
+        if m:
+            # Strip outer quote chars from title regardless of which pattern matched —
+            # handles cases like “'I've Got News for You'” where the apostrophe in the
+            # title fools the quoted regex into falling through to the unquoted one
+            title = m.group(1).strip().strip(_QUOTE_CHARS)
+            return title, _clean_artist(m.group(2).strip())
     return None
 
 
