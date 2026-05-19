@@ -150,6 +150,8 @@ def main() -> None:
     parser.add_argument("feed_url", metavar="FEED_URL", help="Podcast RSS feed URL")
     parser.add_argument("--episode", type=int, metavar="N", default=None,
                         help="Episode to import (1 = most recent). Prompts if omitted.")
+    parser.add_argument("--debug", action="store_true",
+                        help="Print raw TIDAL results for tracks that aren't matched.")
     args = parser.parse_args()
 
     show_title, episodes = _fetch_feed(args.feed_url)
@@ -230,6 +232,14 @@ def main() -> None:
         else:
             not_found.append((title, artist))
             print(f"  ✗  {title!r} – {artist}  [not found on TIDAL]")
+            if args.debug:
+                raw = client.session.search(f"{artist} {title}", limit=5).get("tracks") or []
+                if raw:
+                    for t in raw:
+                        ta = getattr(getattr(t, "artist", None), "name", "?")
+                        print(f"       TIDAL: {t.name!r} – {ta!r}")
+                else:
+                    print(f"       TIDAL: no results for {artist!r} {title!r}")
         time.sleep(0.2)
 
     print(f"\n{len(resolved)} found, {len(not_found)} not matched.")
