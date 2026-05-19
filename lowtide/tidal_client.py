@@ -85,26 +85,55 @@ class TidalClient:
 
     def resolve_track(self, artist: str, title: str):
         """Search TIDAL for a track by artist + title. Returns the best match or None."""
+        import difflib
         import re
+        import unicodedata
 
         def _norm(s: str) -> str:
+            return re.sub(r"[^\w\s]", "", s.lower())
+
+        def _fold(s: str) -> str:
+            s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
             return re.sub(r"[^\w\s]", "", s.lower())
 
         def _match(a: str, b: str) -> bool:
             return a in b or b in a
 
-        try:
-            results = self.session.search(f"{artist} {title}", limit=10)
-            tracks = results.get("tracks") or []
-            a_low, a_norm = artist.lower(), _norm(artist)
-            t_low, t_norm = title.lower(), _norm(title)
+        def _fuzzy(a: str, b: str, threshold: float = 0.82) -> bool:
+            return difflib.SequenceMatcher(None, a, b).ratio() >= threshold
+
+        def _candidates(query: str) -> list:
+            try:
+                return self.session.search(query, limit=25).get("tracks") or []
+            except Exception:
+                return []
+
+        def _find(tracks: list) -> object:
+            a_fold = _fold(artist)
+            t_low, t_norm, t_fold = title.lower(), _norm(title), _fold(title)
             for track in tracks:
                 r_artist = getattr(getattr(track, "artist", None), "name", "").lower()
                 r_title = getattr(track, "name", "").lower()
-                artist_ok = _match(a_low, r_artist) or _match(a_norm, _norm(r_artist))
-                title_ok = _match(t_low, r_title) or _match(t_norm, _norm(r_title))
+                r_artist_fold = _fold(r_artist)
+                r_title_fold = _fold(r_title)
+                title_exact = t_fold == r_title_fold
+                title_ok = (title_exact or _match(t_low, r_title) or _match(t_norm, _norm(r_title))
+                            or _match(t_fold, r_title_fold))
+                # Looser artist threshold when the title is already an exact match
+                artist_threshold = 0.76 if title_exact else 0.82
+                artist_ok = (_match(artist.lower(), r_artist) or _match(_norm(artist), _norm(r_artist))
+                             or _match(a_fold, r_artist_fold)
+                             or _fuzzy(a_fold, r_artist_fold, artist_threshold))
                 if artist_ok and title_ok:
                     return track
+            return None
+
+        try:
+            track = _find(_candidates(f"{artist} {title}"))
+            if track is None:
+                # Fallback: search by title alone in case artist spelling diverges badly
+                track = _find(_candidates(title))
+            return track
         except Exception:
             pass
         return None

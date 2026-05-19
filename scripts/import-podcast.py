@@ -57,29 +57,53 @@ class _LiExtractor(HTMLParser):
             self._buf += data
 
 
-# ── Track line parsing ────────────────────────────────────────────────────────
+# ── Track line parsing ─────────────────────────────────────────
 
-# 'Title' by Artist  or  "Title" by Artist  (handles smart quotes too)
-_QUOTED = re.compile(r"^[‘’“”'\"](.*?)[‘’“”'\"]\s+by\s+(.+)$")
-_UNQUOTED = re.compile(r"^(.+?)\s+by\s+(.+)$")
+# Separator alternatives (tried in order -- "- by" must precede bare "-"):
+#   " - by "   ->  "Runaway - by Nuyorican Soul"
+#   " by "     ->  standard
+#   " - " / en-dash  ->  dash-separated episodes
+_SEP = r"(?:\s*[-–]\s+by\s+|\s+by\s+|\s*[-–]\s+)"
+
+# 'Title' by/- Artist  or  “Title” by/- Artist  (handles smart/curly quotes too)
+_QUOTED = re.compile(
+    r"^[‘’“”'\"](.+?)[‘’“”'\"]" + _SEP + r"(.+)$"
+)
+_UNQUOTED = re.compile(r"^(.+?)" + _SEP + r"(.+)$")
 
 # Best-effort: playlist name in a <strong> tag after "playlist is called"
 _PLAYLIST_NAME = re.compile(
-    r"playlist is called\s*<[^>]+>\s*['"'\"](.+?)['"'\"]",
+    r"playlist is called\s*<[^>]+>\s*[‘“'\"](.+?)[’”'\"]",
     re.IGNORECASE,
 )
 
 
+def _clean_artist(artist: str) -> str:
+    """Strip featuring clauses that aren't the main artist name."""
+    # "featuring X - RealArtist" (main artist at end after last dash)
+    m = re.match(r"^featuring\s+.+[-–]\s*(.+)$", artist, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    # "RealArtist - featuring X"
+    cleaned = re.sub(r"\s*[-–]\s*featuring\s+.+$", "", artist, flags=re.IGNORECASE)
+    return cleaned.strip()
+
+
+_QUOTE_CHARS = "‘’“”'\""
+
+
 def _parse_track_line(text: str) -> tuple[str, str] | None:
     """Return (title, artist) or None."""
-    m = _QUOTED.match(text.strip())
-    if m:
-        return m.group(1).strip(), m.group(2).strip()
-    m = _UNQUOTED.match(text.strip())
-    if m:
-        return m.group(1).strip(), m.group(2).strip()
+    text = text.replace("\xa0", " ").strip()
+    for pattern in (_QUOTED, _UNQUOTED):
+        m = pattern.match(text)
+        if m:
+            # Strip outer quote chars from title regardless of which pattern matched --
+            # handles cases like "'I've Got News for You'" where the apostrophe in the
+            # title fools the quoted regex into falling through to the unquoted one
+            title = m.group(1).strip().strip(_QUOTE_CHARS)
+            return title, _clean_artist(m.group(2).strip())
     return None
-
 
 # ── RSS feed ──────────────────────────────────────────────────────────────────
 
@@ -126,6 +150,8 @@ def main() -> None:
     parser.add_argument("feed_url", metavar="FEED_URL", help="Podcast RSS feed URL")
     parser.add_argument("--episode", type=int, metavar="N", default=None,
                         help="Episode to import (1 = most recent). Prompts if omitted.")
+    parser.add_argument("--debug", action="store_true",
+                        help="Print raw TIDAL results for tracks that aren't matched.")
     args = parser.parse_args()
 
     show_title, episodes = _fetch_feed(args.feed_url)
@@ -206,6 +232,14 @@ def main() -> None:
         else:
             not_found.append((title, artist))
             print(f"  ✗  {title!r} – {artist}  [not found on TIDAL]")
+            if args.debug:
+                raw = client.session.search(f"{artist} {title}", limit=5).get("tracks") or []
+                if raw:
+                    for t in raw:
+                        ta = getattr(getattr(t, "artist", None), "name", "?")
+                        print(f"       TIDAL: {t.name!r} – {ta!r}")
+                else:
+                    print(f"       TIDAL: no results for {artist!r} {title!r}")
         time.sleep(0.2)
 
     print(f"\n{len(resolved)} found, {len(not_found)} not matched.")
@@ -214,11 +248,31 @@ def main() -> None:
         print("Nothing to import.")
         sys.exit(0)
 
-    print(f'\nCreating TIDAL playlist "{playlist_title}"…')
-    playlist = client.session.user.create_playlist(
-        title=playlist_title,
-        description=f"From: {show_title} – {episode['title']}",
+    # Check for an existing playlist with the same name
+    existing = next(
+        (pl for pl in client.session.user.playlists() if pl.name == playlist_title),
+        None,
     )
+
+    if existing:
+        print(f'\nPlaylist "{playlist_title}" already exists ({existing.num_tracks} tracks).')
+        try:
+            answer = input("Update it (clear and replace tracks)? [y/N]: ").strip().lower()
+        except EOFError:
+            answer = ""
+        if answer != "y":
+            print("Skipped.")
+            sys.exit(0)
+        print("Clearing existing playlist…")
+        existing.clear()
+        playlist = existing
+    else:
+        print(f'\nCreating TIDAL playlist "{playlist_title}"…')
+        playlist = client.session.user.create_playlist(
+            title=playlist_title,
+            description=f"From: {show_title} – {episode['title']}",
+        )
+
     playlist.add([str(t.id) for t in resolved])
     print(f"Done. {len(resolved)} tracks added to your TIDAL library.")
 
