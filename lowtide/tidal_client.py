@@ -85,16 +85,25 @@ class TidalClient:
 
     def resolve_track(self, artist: str, title: str):
         """Search TIDAL for a track by artist + title. Returns the best match or None."""
+        import re
+
+        def _norm(s: str) -> str:
+            return re.sub(r"[^\w\s]", "", s.lower())
+
+        def _match(a: str, b: str) -> bool:
+            return a in b or b in a
+
         try:
             results = self.session.search(f"{artist} {title}", limit=10)
             tracks = results.get("tracks") or []
-            a_low = artist.lower()
-            t_low = title.lower()
+            a_low, a_norm = artist.lower(), _norm(artist)
+            t_low, t_norm = title.lower(), _norm(title)
             for track in tracks:
                 r_artist = getattr(getattr(track, "artist", None), "name", "").lower()
                 r_title = getattr(track, "name", "").lower()
-                if (a_low in r_artist or r_artist in a_low) and \
-                   (t_low in r_title or r_title in t_low):
+                artist_ok = _match(a_low, r_artist) or _match(a_norm, _norm(r_artist))
+                title_ok = _match(t_low, r_title) or _match(t_norm, _norm(r_title))
+                if artist_ok and title_ok:
                     return track
         except Exception:
             pass
