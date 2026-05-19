@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from enum import IntEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -18,6 +19,20 @@ _LASTFM_NUDGE = (
 
 # How much a matching mood tag boosts a candidate's score
 _TAG_BOOST = 0.3
+
+
+class DiscoveryMode(IntEnum):
+    ESSENTIAL = 0
+    BALANCED = 1
+    ADVENTUROUS = 2
+
+
+# Per-mode tuning knobs
+_MODE_PARAMS: dict[DiscoveryMode, dict] = {
+    DiscoveryMode.ESSENTIAL:   dict(sim_threshold=0.25, artist_limit=8,  novelty_mul=0.4, top_tracks=3),
+    DiscoveryMode.BALANCED:    dict(sim_threshold=0.0,  artist_limit=15, novelty_mul=1.0, top_tracks=3),
+    DiscoveryMode.ADVENTUROUS: dict(sim_threshold=0.0,  artist_limit=25, novelty_mul=2.0, top_tracks=3),
+}
 
 
 def _novelty(play_count: int) -> float:
@@ -49,36 +64,43 @@ class Recommender:
 
     # ── Public API ────────────────────────────────────────────────────────
 
-    def build_track_radio(self, track, n: int = 25) -> tuple[list, str | None]:
+    def build_track_radio(
+        self, track, n: int = 25, mode: DiscoveryMode = DiscoveryMode.BALANCED
+    ) -> tuple[list, str | None]:
         """
         Contextual radio seeded from a specific track.
         Returns (tidal_tracks, nudge_message_or_None).
         """
         if self.has_lastfm:
-            return self._lastfm_track_radio(track, n), None
+            return self._lastfm_track_radio(track, n, mode), None
         return self._fallback_track_radio(track, n), _LASTFM_NUDGE
 
-    def build_ride_the_tide(self, n: int = 25) -> tuple[list, str | None]:
+    def build_ride_the_tide(
+        self, n: int = 25, mode: DiscoveryMode = DiscoveryMode.BALANCED
+    ) -> tuple[list, str | None]:
         """
         General recommendations based on overall listening history.
         Returns (tidal_tracks, nudge_message_or_None).
         """
         if self.has_lastfm:
-            return self._lastfm_ride_the_tide(n), None
+            return self._lastfm_ride_the_tide(n, mode), None
         return self._fallback_ride_the_tide(n), _LASTFM_NUDGE
 
-    def build_genre_playlist(self, genre: str, n: int = 20) -> tuple[list, str | None]:
+    def build_genre_playlist(
+        self, genre: str, n: int = 20, mode: DiscoveryMode = DiscoveryMode.BALANCED
+    ) -> tuple[list, str | None]:
         """
         Build a playlist for a given Last.fm tag/genre.
         Returns (tidal_tracks, nudge_message_or_None).
         """
         if self.has_lastfm:
-            return self._lastfm_genre_playlist(genre, n), None
+            return self._lastfm_genre_playlist(genre, n, mode), None
         return self._fallback_genre_playlist(genre, n), _LASTFM_NUDGE
 
     # ── Last.fm: genre playlist ───────────────────────────────────────────
 
-    def _lastfm_genre_playlist(self, genre: str, n: int) -> list:
+    def _lastfm_genre_playlist(self, genre: str, n: int, mode: DiscoveryMode) -> list:
+        p = _MODE_PARAMS[mode]
         tag = self._network.get_tag(genre)
         candidates: dict[tuple[str, str], float] = {}
 
@@ -95,11 +117,11 @@ class Recommender:
 
         # Broader: top artists for this tag → their top tracks
         try:
-            for item in tag.get_top_artists(limit=15):
+            for item in tag.get_top_artists(limit=p["artist_limit"]):
                 a_name = getattr(item.item, "name", "") or ""
                 artist_weight = float(item.weight or 1) * 0.6
                 try:
-                    for tt in item.item.get_top_tracks(limit=3):
+                    for tt in item.item.get_top_tracks(limit=p["top_tracks"]):
                         t_name = getattr(tt.item, "title", "") or ""
                         if not t_name:
                             continue
@@ -111,11 +133,12 @@ class Recommender:
         except Exception as e:
             log.debug("genre playlist: top artists failed for %s: %s", genre, e)
 
-        return self._score_and_resolve(candidates, {genre.lower()}, n)
+        return self._score_and_resolve(candidates, {genre.lower()}, n, mode)
 
     # ── Last.fm: track radio ──────────────────────────────────────────────
 
-    def _lastfm_track_radio(self, track, n: int) -> list:
+    def _lastfm_track_radio(self, track, n: int, mode: DiscoveryMode) -> list:
+        p = _MODE_PARAMS[mode]
         artist_name = getattr(getattr(track, "artist", None), "name", "") or ""
         title = getattr(track, "name", "") or ""
 
@@ -142,14 +165,14 @@ class Recommender:
         # 3. Similar artists → their top tracks (broader pool)
         try:
             lastfm_artist = self._network.get_artist(artist_name)
-            for sim in lastfm_artist.get_similar(limit=15):
+            for sim in lastfm_artist.get_similar(limit=p["artist_limit"]):
                 artist_sim = float(sim.match)
                 sim_name = getattr(sim.item, "name", "") or ""
                 sim_tags = _artist_tags(sim.item)
                 tag_overlap = len(seed_tags & sim_tags)
                 boost = 1.0 + _TAG_BOOST * tag_overlap
                 try:
-                    for tt in sim.item.get_top_tracks(limit=5):
+                    for tt in sim.item.get_top_tracks(limit=p["top_tracks"]):
                         t_name = getattr(tt.item, "title", "") or ""
                         if not t_name:
                             continue
@@ -162,11 +185,11 @@ class Recommender:
         except Exception as e:
             log.debug("track radio: similar artists failed: %s", e)
 
-        return self._score_and_resolve(candidates, seed_tags, n)
+        return self._score_and_resolve(candidates, seed_tags, n, mode)
 
     # ── Last.fm: ride the tide ────────────────────────────────────────────
 
-    def _lastfm_ride_the_tide(self, n: int) -> list:
+    def _lastfm_ride_the_tide(self, n: int, mode: DiscoveryMode) -> list:
         top_artists = self._store.top_artists(limit=10)
         if not top_artists:
             # Cold start: no local play counts yet – query Last.fm directly
@@ -194,6 +217,8 @@ class Recommender:
             except Exception:
                 pass
 
+        p = _MODE_PARAMS[mode]
+
         # Expand: for each top artist, get similar artists and their top tracks
         candidates: dict[tuple[str, str], float] = {}
         for artist_name, artist_plays in top_artists:
@@ -201,14 +226,14 @@ class Recommender:
             familiarity_penalty = 1.0 / (1.0 + math.log1p(artist_plays / 10))
             try:
                 a = self._network.get_artist(artist_name)
-                for sim in a.get_similar(limit=10):
+                for sim in a.get_similar(limit=p["artist_limit"]):
                     sim_name = getattr(sim.item, "name", "") or ""
                     artist_sim = float(sim.match) * familiarity_penalty
                     sim_tags = _artist_tags(sim.item)
                     tag_overlap = len(seed_tags & sim_tags)
                     boost = 1.0 + _TAG_BOOST * tag_overlap
                     try:
-                        for tt in sim.item.get_top_tracks(limit=3):
+                        for tt in sim.item.get_top_tracks(limit=p["top_tracks"]):
                             t_name = getattr(tt.item, "title", "") or ""
                             if not t_name:
                                 continue
@@ -221,7 +246,7 @@ class Recommender:
             except Exception as e:
                 log.debug("ride the tide: failed for artist %s: %s", artist_name, e)
 
-        return self._score_and_resolve(candidates, seed_tags, n)
+        return self._score_and_resolve(candidates, seed_tags, n, mode)
 
     # ── Shared scoring + TIDAL resolution ────────────────────────────────
 
@@ -230,24 +255,33 @@ class Recommender:
         candidates: dict[tuple[str, str], float],
         seed_tags: set[str],
         n: int,
+        mode: DiscoveryMode = DiscoveryMode.BALANCED,
     ) -> list:
         """Apply novelty weighting, sort, and resolve to TIDAL tracks."""
+        p = _MODE_PARAMS[mode]
+        threshold = p["sim_threshold"]
+        novelty_exp = p["novelty_mul"]
         scored = []
         for (a_name, t_name), sim_score in candidates.items():
+            if sim_score < threshold:
+                continue
             play_count = self._store.get_by_names(a_name, t_name)
-            score = sim_score * _novelty(play_count)
+            # novelty_exp > 1 penalises familiar tracks harder (Adventurous);
+            # novelty_exp < 1 softens the penalty (Essential)
+            score = sim_score * (_novelty(play_count) ** novelty_exp)
             scored.append((a_name, t_name, score))
 
         scored.sort(key=lambda x: -x[2])
 
         results = []
-        for a_name, t_name, _ in scored:
+        max_attempts = n + 20
+        for a_name, t_name, _ in scored[:max_attempts]:
             if len(results) >= n:
                 break
             track = self._client.resolve_track(a_name, t_name)
             if track:
                 results.append(track)
-            time.sleep(0.1)
+            time.sleep(0.2)
 
         return results
 

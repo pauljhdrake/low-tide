@@ -28,6 +28,10 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 - **Track radio** – press `R` on any track to build a 25-track radio seeded from that track using Last.fm similarity data, artist tag matching, and your play history
 - **Genre Radio** – browse TIDAL's curated genre catalogue or type any Last.fm tag (e.g. `shoegaze`, `drum and bass`) to build a genre playlist
 - **Ride the Tide** – personalised recommendations from the sidebar, built from your overall listening history across TIDAL, Last.fm, and Spotify; no seed track required
+- **Adventure Dial** – press `D` in any radio or genre screen to set how far recommendations venture from familiar territory:
+  - *Essential* – close matches only; high similarity threshold and lighter novelty weighting keep results in well-charted ground
+  - *Balanced* – the default; a moderate pool of similar artists with standard novelty weighting
+  - *Adventurous* – a wider net of similar artists with stronger novelty weighting, surfacing artists and tracks you have rarely or never heard
 - All radio modes work without Last.fm using play count data alone, with a prompt to configure it for richer results
 
 ### Library and browsing
@@ -149,6 +153,7 @@ The source code for token handling is in [`lowtide/tidal_client.py`](lowtide/tid
 | `l` | Love / unlove current track |
 | `x` | Toggle crossfade |
 | `R` | Start radio from focused track |
+| `D` | Cycle Adventure Dial (Essential → Balanced → Adventurous) in radio / genre screens |
 | `G` | Toggle heatmap scale (Listening Journey) |
 | `a` | Add focused track to queue |
 | `A` | Add all tracks in current view to queue |

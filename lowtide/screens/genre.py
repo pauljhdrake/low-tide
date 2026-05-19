@@ -8,13 +8,23 @@ from textual.binding import Binding
 from textual.widget import Widget
 from textual.widgets import Input, Label, ListItem, ListView
 
+from lowtide.recommender import DiscoveryMode
 from lowtide.widgets.track_list import TrackList
 
 log = logging.getLogger(__name__)
 
+_MODE_LABELS = {
+    DiscoveryMode.ESSENTIAL:   "Essential",
+    DiscoveryMode.BALANCED:    "Balanced",
+    DiscoveryMode.ADVENTUROUS: "Adventurous",
+}
+
 
 class GenreScreen(Widget):
-    BINDINGS = [Binding("A", "append_all", "Add all to queue", show=False)]
+    BINDINGS = [
+        Binding("A", "append_all", "Add all to queue", show=False),
+        Binding("D", "cycle_dial", "Discovery dial", show=True),
+    ]
 
     DEFAULT_CSS = """
     GenreScreen {
@@ -37,6 +47,9 @@ class GenreScreen(Widget):
     GenreScreen #genre-genres ListItem {
         padding: 0 1;
     }
+    GenreScreen #genre-dial {
+        margin-bottom: 1;
+    }
     GenreScreen #genre-status {
         color: $text-muted;
         margin-bottom: 1;
@@ -48,13 +61,31 @@ class GenreScreen(Widget):
     }
     """
 
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._mode = DiscoveryMode.BALANCED
+        self._active_tag: str | None = None
+
     def compose(self) -> ComposeResult:
         yield Label("Genre Radio", id="genre-heading")
         yield Input(placeholder="Last.fm tag, e.g. shoegaze, drum and bass…", id="genre-input")
         yield ListView(id="genre-genres")
+        yield Label(self._dial_label(), id="genre-dial")
         yield Label("", id="genre-status")
         yield Label("", id="genre-nudge")
         yield TrackList(id="genre-tracks")
+
+    def _dial_label(self) -> str:
+        parts = []
+        for mode, name in _MODE_LABELS.items():
+            parts.append(f"[bold]{name}[/bold]" if mode == self._mode else f"[dim]{name}[/dim]")
+        return "  ".join(parts) + "  [dim](D)[/dim]"
+
+    def action_cycle_dial(self) -> None:
+        self._mode = DiscoveryMode((self._mode + 1) % len(DiscoveryMode))
+        self.query_one("#genre-dial", Label).update(self._dial_label())
+        if self._active_tag:
+            self._load_lastfm_tag(self._active_tag)
 
     def on_mount(self) -> None:
         self._load_tidal_genres()
@@ -88,15 +119,17 @@ class GenreScreen(Widget):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         tag = event.value.strip()
         if tag:
+            self._active_tag = tag
             self._load_lastfm_tag(tag)
 
     @work(thread=True)
     def _load_lastfm_tag(self, tag: str) -> None:
+        mode = self._mode
         self.app.call_from_thread(
             self.query_one("#genre-status", Label).update, "[dim]Building…[/dim]"
         )
         try:
-            tracks, nudge = self.app.recommender.build_genre_playlist(tag)
+            tracks, nudge = self.app.recommender.build_genre_playlist(tag, mode=mode)
             self.app.call_from_thread(
                 self._populate_tracks, tracks, nudge, f"Tag: {tag}"
             )
