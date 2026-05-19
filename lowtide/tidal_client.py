@@ -99,8 +99,8 @@ class TidalClient:
         def _match(a: str, b: str) -> bool:
             return a in b or b in a
 
-        def _fuzzy(a: str, b: str) -> bool:
-            return difflib.SequenceMatcher(None, a, b).ratio() >= 0.82
+        def _fuzzy(a: str, b: str, threshold: float = 0.82) -> bool:
+            return difflib.SequenceMatcher(None, a, b).ratio() >= threshold
 
         def _candidates(query: str) -> list:
             try:
@@ -114,10 +114,16 @@ class TidalClient:
             for track in tracks:
                 r_artist = getattr(getattr(track, "artist", None), "name", "").lower()
                 r_title = getattr(track, "name", "").lower()
+                r_artist_fold = _fold(r_artist)
+                r_title_fold = _fold(r_title)
+                title_exact = t_fold == r_title_fold
+                title_ok = (title_exact or _match(t_low, r_title) or _match(t_norm, _norm(r_title))
+                            or _match(t_fold, r_title_fold))
+                # Looser artist threshold when the title is already an exact match
+                artist_threshold = 0.76 if title_exact else 0.82
                 artist_ok = (_match(artist.lower(), r_artist) or _match(_norm(artist), _norm(r_artist))
-                             or _match(a_fold, _fold(r_artist)) or _fuzzy(a_fold, _fold(r_artist)))
-                title_ok = (_match(t_low, r_title) or _match(t_norm, _norm(r_title))
-                            or _match(t_fold, _fold(r_title)))
+                             or _match(a_fold, r_artist_fold)
+                             or _fuzzy(a_fold, r_artist_fold, artist_threshold))
                 if artist_ok and title_ok:
                     return track
             return None
