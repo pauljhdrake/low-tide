@@ -237,11 +237,31 @@ def main() -> None:
         print("Nothing to import.")
         sys.exit(0)
 
-    print(f'\nCreating TIDAL playlist "{playlist_title}"…')
-    playlist = client.session.user.create_playlist(
-        title=playlist_title,
-        description=f"From: {show_title} – {episode['title']}",
+    # Check for an existing playlist with the same name
+    existing = next(
+        (pl for pl in client.session.user.playlists() if pl.name == playlist_title),
+        None,
     )
+
+    if existing:
+        print(f'\nPlaylist "{playlist_title}" already exists ({existing.num_tracks} tracks).')
+        try:
+            answer = input("Update it (clear and replace tracks)? [y/N]: ").strip().lower()
+        except EOFError:
+            answer = ""
+        if answer != "y":
+            print("Skipped.")
+            sys.exit(0)
+        print("Clearing existing playlist…")
+        existing.clear()
+        playlist = existing
+    else:
+        print(f'\nCreating TIDAL playlist "{playlist_title}"…')
+        playlist = client.session.user.create_playlist(
+            title=playlist_title,
+            description=f"From: {show_title} – {episode['title']}",
+        )
+
     playlist.add([str(t.id) for t in resolved])
     print(f"Done. {len(resolved)} tracks added to your TIDAL library.")
 
