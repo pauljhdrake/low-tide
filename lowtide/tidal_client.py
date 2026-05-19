@@ -99,9 +99,13 @@ class TidalClient:
         def _match(a: str, b: str) -> bool:
             return a in b or b in a
 
-        try:
-            results = self.session.search(f"{artist} {title}", limit=10)
-            tracks = results.get("tracks") or []
+        def _candidates(query: str) -> list:
+            try:
+                return self.session.search(query, limit=25).get("tracks") or []
+            except Exception:
+                return []
+
+        def _find(tracks: list) -> object:
             a_low, a_norm, a_fold = artist.lower(), _norm(artist), _fold(artist)
             t_low, t_norm, t_fold = title.lower(), _norm(title), _fold(title)
             for track in tracks:
@@ -113,6 +117,14 @@ class TidalClient:
                             or _match(t_fold, _fold(r_title)))
                 if artist_ok and title_ok:
                     return track
+            return None
+
+        try:
+            track = _find(_candidates(f"{artist} {title}"))
+            if track is None:
+                # Fallback: search by title alone in case artist spelling diverges badly
+                track = _find(_candidates(title))
+            return track
         except Exception:
             pass
         return None
