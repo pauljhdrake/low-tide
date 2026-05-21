@@ -13,6 +13,7 @@ _REPLAYGAIN_MODES = {"track", "album", "no"}
 MPV_BASE_ARGS = [
     "mpv",
     "--no-video",
+    "--vo=null",
     "--idle=yes",
     f"--input-ipc-server={SOCKET_PATH}",
     "--really-quiet",
