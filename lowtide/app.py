@@ -278,6 +278,7 @@ class LowTideApp(App):
         Binding("l", "toggle_favourite", "Love"),
         Binding("q", "toggle_queue", "Queue"),
         Binding("e", "toggle_eq", "EQ"),
+        Binding("y", "toggle_lyrics", "Lyrics", show=False),
         Binding("escape", "go_back", "Back", show=False),
         Binding("ctrl+s", "focus_search", "Search"),
         Binding("ctrl+l", "focus_library", "Library"),
@@ -803,6 +804,9 @@ class LowTideApp(App):
 
     async def action_toggle_eq(self) -> None:
         self.query_one(NowPlayingBar).toggle_eq()
+
+    def action_toggle_lyrics(self) -> None:
+        self.query_one(NowPlayingBar).toggle_lyrics()
 
     def _save_queue(self) -> None:
         from lowtide.tidal_client import CONF_DIR

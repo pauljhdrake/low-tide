@@ -120,6 +120,7 @@ class NowPlayingBar(Widget):
         self._lyrics: list[LyricLine] = []
         self._lyrics_idx: int = 0
         self._eq_visible: bool = False
+        self._lyrics_visible: bool = False
 
     def compose(self) -> ComposeResult:
         yield Label("", id="np-track")
@@ -223,9 +224,16 @@ class NowPlayingBar(Widget):
     def set_lyrics(self, lines: list[LyricLine]) -> None:
         self._lyrics = lines
         self._lyrics_idx = 0
-        self.query_one("#np-lyrics").display = bool(lines)
+        self.query_one("#np-lyrics").display = bool(lines) and self._lyrics_visible
         self._update_height()
-        if lines:
+        if lines and self._lyrics_visible:
+            self._refresh_lyrics_display()
+
+    def toggle_lyrics(self) -> None:
+        self._lyrics_visible = not self._lyrics_visible
+        self.query_one("#np-lyrics").display = bool(self._lyrics) and self._lyrics_visible
+        self._update_height()
+        if self._lyrics and self._lyrics_visible:
             self._refresh_lyrics_display()
 
     def toggle_eq(self) -> None:
@@ -235,7 +243,7 @@ class NowPlayingBar(Widget):
 
     def _update_height(self) -> None:
         h = _HEIGHT_COMPACT
-        if self._lyrics:
+        if self._lyrics and self._lyrics_visible:
             h += _HEIGHT_LYRICS_EXTRA
         if self._eq_visible:
             h += _HEIGHT_EQ
