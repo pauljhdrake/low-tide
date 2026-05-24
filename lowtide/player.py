@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -13,7 +14,6 @@ _REPLAYGAIN_MODES = {"track", "album", "no"}
 MPV_BASE_ARGS = [
     "mpv",
     "--no-video",
-    "--vo=null",
     "--idle=yes",
     f"--input-ipc-server={SOCKET_PATH}",
     "--really-quiet",
@@ -24,6 +24,15 @@ MPV_BASE_ARGS = [
 
 def _build_mpv_args(config: dict) -> list[str]:
     args = list(MPV_BASE_ARGS)
+
+    # macOS: prevent mpv from creating a visible window when video-add
+    # injects album art tracks. --vo=null skips video rendering;
+    # --macos-app-activation-policy=prohibited prevents the Cocoa app
+    # from creating any window at all (media keys and Now Playing info
+    # center work independently).
+    if sys.platform == "darwin":
+        args.append("--vo=null")
+        args.append("--macos-app-activation-policy=prohibited")
 
     rg = config.get("replaygain", "album")
     if rg not in _REPLAYGAIN_MODES:
