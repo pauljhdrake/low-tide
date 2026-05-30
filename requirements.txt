@@ -1,4 +1,4 @@
 tidalapi>=0.8.11
 textual>=8.0.0
-textual-image>=0.8.5
+textual-image>=0.12.0,<0.13
 Pillow>=11.0.0
