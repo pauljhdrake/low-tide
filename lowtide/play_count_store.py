@@ -6,6 +6,8 @@ import os
 import random
 import threading
 
+from lowtide.secure_io import atomic_write_json, read_json
+
 log = logging.getLogger(__name__)
 
 # Shuffle mode constants
@@ -47,22 +49,27 @@ class PlayCountStore:
 
     def _load(self) -> None:
         try:
-            with open(self._path) as f:
-                self._counts = json.load(f)
-        except FileNotFoundError:
-            pass
-        except Exception as e:
-            log.warning("play count store load failed: %s", e)
+            data = read_json(self._path, default={})
+            if not isinstance(data, dict):
+                raise ValueError("play count state is not an object")
+            self._counts = {
+                key: value
+                for key, value in data.items()
+                if isinstance(key, str)
+                and isinstance(value, int)
+                and not isinstance(value, bool)
+                and value >= 0
+            }
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            log.warning("play count store load failed (%s)", type(error).__name__)
 
     def save(self) -> None:
         try:
-            os.makedirs(os.path.dirname(self._path), exist_ok=True)
             with self._lock:
                 data = dict(self._counts)
-            with open(self._path, "w") as f:
-                json.dump(data, f)
-        except Exception as e:
-            log.warning("play count store save failed: %s", e)
+            atomic_write_json(self._path, data)
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            log.warning("play count store save failed (%s)", type(error).__name__)
 
     # ── Read / write ──────────────────────────────────────────────────────
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from typing import TYPE_CHECKING, Callable
 
@@ -71,16 +72,24 @@ class MediaPlayer2Interface(ServiceInterface):
 class MediaPlayer2PlayerInterface(ServiceInterface):
     def __init__(
         self,
-        play_pause_cb: Callable,
+        toggle_pause_cb: Callable,
+        play_cb: Callable,
+        pause_cb: Callable,
+        stop_cb: Callable,
         next_cb: Callable,
         prev_cb: Callable,
         seek_cb: Callable,
+        volume_cb: Callable,
     ):
         super().__init__("org.mpris.MediaPlayer2.Player")
-        self._play_pause_cb = play_pause_cb
+        self._toggle_pause_cb = toggle_pause_cb
+        self._play_cb = play_cb
+        self._pause_cb = pause_cb
+        self._stop_cb = stop_cb
         self._next_cb = next_cb
         self._prev_cb = prev_cb
         self._seek_cb = seek_cb
+        self._volume_cb = volume_cb
 
         self._playback_status = "Stopped"
         self._metadata: dict = {}
@@ -93,19 +102,19 @@ class MediaPlayer2PlayerInterface(ServiceInterface):
 
     @method()
     def PlayPause(self):
-        asyncio.ensure_future(self._play_pause_cb())
+        asyncio.ensure_future(self._toggle_pause_cb())
 
     @method()
     def Play(self):
-        asyncio.ensure_future(self._play_pause_cb())
+        asyncio.ensure_future(self._play_cb())
 
     @method()
     def Pause(self):
-        asyncio.ensure_future(self._play_pause_cb())
+        asyncio.ensure_future(self._pause_cb())
 
     @method()
     def Stop(self):
-        pass
+        asyncio.ensure_future(self._stop_cb())
 
     @method()
     def Next(self):
@@ -175,6 +184,7 @@ class MediaPlayer2PlayerInterface(ServiceInterface):
     @Volume.setter
     def Volume(self, val: "d"):  # noqa: F821
         self._volume = max(0.0, min(1.0, val))
+        asyncio.ensure_future(self._volume_cb(round(self._volume * 100)))
 
     @dbus_property(access=PropertyAccess.READ)
     def Position(self) -> "x":  # noqa: F821
@@ -230,10 +240,14 @@ class MPRISService:
             self._bus = await MessageBus(bus_type=BusType.SESSION).connect()
             root_iface = MediaPlayer2Interface(quit_cb=self._app.exit)
             self._player_iface = MediaPlayer2PlayerInterface(
-                play_pause_cb=self._app.player.toggle_pause,
+                toggle_pause_cb=self._app.player.toggle_pause,
+                play_cb=self._app.player.resume,
+                pause_cb=self._app.player.pause,
+                stop_cb=self._app.player.stop,
                 next_cb=self._app.player.next,
                 prev_cb=self._app.player.prev,
                 seek_cb=self._app.player.seek,
+                volume_cb=self._app.set_volume,
             )
             self._bus.export(MPRIS_OBJECT_PATH, root_iface)
             self._bus.export(MPRIS_OBJECT_PATH, self._player_iface)
@@ -245,7 +259,9 @@ class MPRISService:
     def update_track(self, track) -> None:
         if not self._player_iface:
             return
-        track_id = f"/org/mpris/MediaPlayer2/track/{getattr(track, 'id', 0)}"
+        raw_id = str(getattr(track, "id", 0)).encode("utf-8", errors="replace")
+        safe_id = hashlib.sha256(raw_id).hexdigest()[:24]
+        track_id = f"/org/mpris/MediaPlayer2/track/{safe_id}"
         title = getattr(track, "name", "")
         artist = getattr(getattr(track, "artist", None), "name", "")
         album = getattr(getattr(track, "album", None), "name", "")
@@ -265,10 +281,10 @@ class MPRISService:
         }
         self._emit_properties_changed({"Metadata": self._player_iface._metadata})
 
-    def update_playback_status(self, paused: bool) -> None:
+    def update_playback_status(self, paused: bool, *, stopped: bool = False) -> None:
         if not self._player_iface:
             return
-        status = "Paused" if paused else "Playing"
+        status = "Stopped" if stopped else "Paused" if paused else "Playing"
         self._player_iface._playback_status = status
         self._emit_properties_changed({"PlaybackStatus": status})
 
@@ -308,5 +324,5 @@ class MPRISService:
         if self._bus:
             try:
                 self._bus.disconnect()
-            except Exception:
-                pass
+            except Exception as error:
+                log.warning("MPRIS shutdown failed (%s)", type(error).__name__)

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from io import BytesIO
+import logging
 
-import requests
 from PIL import Image as PILImage
 from textual import work
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual_image.widget import Image as TImage
+
+from lowtide.artwork import load_album_art
+
+log = logging.getLogger(__name__)
 
 
 class AlbumArt(Widget):
@@ -42,21 +45,16 @@ class AlbumArt(Widget):
         self._current_url = None
         try:
             self.query_one(TImage).image = None
-        except Exception:
-            pass
+        except Exception as error:
+            log.debug("album artwork clear failed (%s)", type(error).__name__)
 
     @work(thread=True)
     def _fetch(self, url: str) -> None:
         try:
-            if url.startswith("file://"):
-                img = PILImage.open(url[7:]).convert("RGB")
-            else:
-                resp = requests.get(url, timeout=5)
-                resp.raise_for_status()
-                img = PILImage.open(BytesIO(resp.content)).convert("RGB")
+            img = load_album_art(url)
             self.app.call_from_thread(self._apply, img, url)
-        except Exception:
-            pass
+        except (OSError, RuntimeError, ValueError) as error:
+            log.debug("album artwork unavailable (%s)", type(error).__name__)
 
     def _apply(self, img: PILImage.Image, url: str) -> None:
         if url != self._current_url:

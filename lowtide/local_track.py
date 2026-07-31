@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import stat
 from dataclasses import dataclass
+from pathlib import Path
 
 _COVER_NAMES = (
     "cover.jpg", "cover.png", "folder.jpg", "folder.png",
@@ -26,10 +28,20 @@ class LocalAlbum:
     def image(self, size: int = 320) -> str:
         if not self._dir:
             return ""
+        album_dir = Path(self._dir).resolve()
         for name in _COVER_NAMES:
-            path = os.path.join(self._dir, name)
-            if os.path.exists(path):
-                return f"file://{path}"
+            path = os.path.join(album_dir, name)
+            try:
+                file_st = os.lstat(path)
+                resolved = Path(path).resolve(strict=True)
+            except OSError:
+                continue
+            if (
+                stat.S_ISREG(file_st.st_mode)
+                and not stat.S_ISLNK(file_st.st_mode)
+                and resolved.is_relative_to(album_dir)
+            ):
+                return resolved.as_uri()
         return ""
 
 

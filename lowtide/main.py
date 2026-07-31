@@ -81,8 +81,12 @@ def main() -> None:
     from lowtide.tidal_client import TidalClient
 
     client = TidalClient()
-    client.ensure_login()
-    LowTideApp(client=client).run()
+    try:
+        client.ensure_login()
+        LowTideApp(client=client).run()
+    finally:
+        # Safe if the app already performed its normal teardown.
+        client.close()
 
 
 if __name__ == "__main__":

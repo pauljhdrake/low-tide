@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 import logging
-import os
 import time
+
+from lowtide.secure_io import atomic_write_json, read_json
 
 log = logging.getLogger(__name__)
 
@@ -29,29 +29,26 @@ class ScrobbleStore:
 
     def _load(self) -> None:
         try:
-            with open(self._path) as f:
-                data = json.load(f)
+            data = read_json(self._path, default={})
+            if not isinstance(data, dict):
+                raise ValueError("scrobble state is not an object")
             self._fetched_at = data.get("fetched_at", 0)
             self._scrobbles = [(s["a"], s["t"]) for s in data.get("scrobbles", [])]
             log.debug("scrobble store: loaded %d entries", len(self._scrobbles))
-        except FileNotFoundError:
-            pass
-        except Exception as e:
-            log.warning("scrobble store: load failed: %s", e)
+        except (KeyError, OSError, RuntimeError, TypeError, ValueError) as error:
+            log.warning("scrobble store load failed (%s)", type(error).__name__)
 
     def save(self) -> None:
         try:
-            os.makedirs(os.path.dirname(self._path), exist_ok=True)
-            with open(self._path, "w") as f:
-                json.dump(
-                    {
-                        "fetched_at": self._fetched_at,
-                        "scrobbles": [{"a": a, "t": t} for a, t in self._scrobbles],
-                    },
-                    f,
-                )
-        except Exception as e:
-            log.warning("scrobble store: save failed: %s", e)
+            atomic_write_json(
+                self._path,
+                {
+                    "fetched_at": self._fetched_at,
+                    "scrobbles": [{"a": a, "t": t} for a, t in self._scrobbles],
+                },
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            log.warning("scrobble store save failed (%s)", type(error).__name__)
 
     # ── Public API ────────────────────────────────────────────────────────
 

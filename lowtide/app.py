@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import stat
 import sys
 from typing import Optional
 
@@ -44,12 +45,17 @@ def _now_playing_title(track) -> str:
     return title or artist or "Unknown"
 
 
-def _try_unlink(path: str) -> None:
-    """Remove a file, ignoring errors."""
+def _try_unlink_private_file(path: str, directory: str) -> None:
+    """Remove only a regular file owned by this user in the expected directory."""
     try:
-        os.unlink(path)
-    except Exception:
-        pass
+        candidate = os.path.abspath(path)
+        if os.path.dirname(candidate) != os.path.abspath(directory):
+            return
+        st = os.lstat(candidate)
+        if stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid():
+            os.unlink(candidate)
+    except FileNotFoundError:
+        return
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +259,63 @@ class _SavedTrack:
         self.bpm = None
 
 
+_MAX_SAVED_QUEUE_TRACKS = 10_000
+
+
+def _parse_saved_queue(data: dict) -> tuple[list[_SavedTrack], int]:
+    """Validate private queue state without resolving every item over the network."""
+    raw = data.get("tracks")
+    placeholders: list[_SavedTrack] = []
+    if raw is not None:
+        if not isinstance(raw, list) or len(raw) > _MAX_SAVED_QUEUE_TRACKS:
+            raise ValueError("saved queue tracks are invalid")
+        for item in raw:
+            if not isinstance(item, dict):
+                raise ValueError("saved queue track is invalid")
+            track_id = item.get("id")
+            if isinstance(track_id, str) and track_id.isascii() and track_id.isdigit():
+                track_id = int(track_id)
+            if (
+                not isinstance(track_id, int)
+                or isinstance(track_id, bool)
+                or track_id <= 0
+            ):
+                continue
+            fields = [item.get(key, "") for key in ("name", "artist", "album")]
+            if not all(isinstance(value, str) for value in fields):
+                raise ValueError("saved queue metadata is invalid")
+            art_url = item.get("art_url")
+            if art_url is not None and not isinstance(art_url, str):
+                raise ValueError("saved queue artwork is invalid")
+            placeholders.append(
+                _SavedTrack(track_id, fields[0], fields[1], fields[2], art_url)
+            )
+    else:
+        track_ids = data.get("track_ids", [])
+        if not isinstance(track_ids, list) or len(track_ids) > _MAX_SAVED_QUEUE_TRACKS:
+            raise ValueError("saved queue track IDs are invalid")
+        for track_id in track_ids:
+            if isinstance(track_id, str) and track_id.isascii() and track_id.isdigit():
+                track_id = int(track_id)
+            if (
+                isinstance(track_id, int)
+                and not isinstance(track_id, bool)
+                and track_id > 0
+            ):
+                placeholders.append(
+                    _SavedTrack(track_id, f"Track {track_id}", "", "", None)
+                )
+
+    saved_idx = data.get("current_idx", 0)
+    if (
+        not isinstance(saved_idx, int)
+        or isinstance(saved_idx, bool)
+        or not 0 <= saved_idx < len(placeholders)
+    ):
+        saved_idx = 0
+    return placeholders, saved_idx
+
+
 # ---------------------------------------------------------------------------
 # Main App
 # ---------------------------------------------------------------------------
@@ -296,7 +359,7 @@ class LowTideApp(App):
         super().__init__()
         self.client = client
         cfg = client.config
-        self.player = Player(config=cfg)
+        self.player = Player(config=cfg, runtime=client.runtime)
         self.mpris = MPRISService(self)
         self.scrobbler = Scrobbler(cfg)
         from lowtide.tidal_client import CONF_DIR
@@ -362,6 +425,7 @@ class LowTideApp(App):
             self.notify(str(e), severity="error", timeout=10)
             return
         await self.mpris.start()
+        self.mpris.update_volume(self.player.volume)
         eq = self.query_one(EQVisualizer)
         eq.set_theme(self._eq_theme)
         eq._show_labels = self._eq_labels
@@ -381,13 +445,14 @@ class LowTideApp(App):
         position = await self.player.get_position()
         duration = await self.player.get_duration()
         paused = await self.player.get_paused()
+        stopped = bool(await self.player.get_property("idle-active"))
         bar.position = position
         bar.duration = duration
-        bar.paused = paused
+        bar.paused = paused or stopped
         bar.volume = self._target_volume
-        self.query_one(EQVisualizer).paused = paused
+        self.query_one(EQVisualizer).paused = paused or stopped
         self.mpris.update_position(position)
-        self.mpris.update_playback_status(paused)
+        self.mpris.update_playback_status(paused, stopped=stopped)
         self.scrobbler.update(position, duration)
 
         # Crossfade: fade out as current track approaches its end
@@ -524,11 +589,14 @@ class LowTideApp(App):
         for i in range(start_idx, end):
             if self._queue_gen != queue_gen or self._load_gen != load_gen:
                 return
-            url = self.client.get_track_url(self._queue[i])
+            track = self._resolve_saved_track(i, queue_gen, load_gen)
+            if track is None:
+                continue
+            url = self.client.get_track_url(track)
             if not url or self._queue_gen != queue_gen or self._load_gen != load_gen:
                 continue
             if first:
-                self.call_from_thread(self._play_if_current, url, queue_gen, self._queue[i], i)
+                self.call_from_thread(self._play_if_current, url, queue_gen, track, i)
                 first = False
             else:
                 self.call_from_thread(self._append_if_current, url, queue_gen, i)
@@ -544,6 +612,48 @@ class LowTideApp(App):
             self.call_from_thread(
                 lambda: self.query_one(QueuePanel).refresh_queue(self._queue, self._current_idx)
             )
+
+    def _resolve_saved_track(
+        self, index: int, queue_gen: int, load_gen: int
+    ):
+        track = self._queue[index]
+        if not isinstance(track, _SavedTrack):
+            return track
+        try:
+            resolved = self.client.get_track(track.id)
+        except Exception as error:
+            log.warning(
+                "saved queue track could not be restored (%s)",
+                type(error).__name__,
+            )
+            return None
+        if self._queue_gen != queue_gen or self._load_gen != load_gen:
+            return None
+        self.call_from_thread(
+            self._replace_saved_track,
+            index,
+            track,
+            resolved,
+            queue_gen,
+            load_gen,
+        )
+        return resolved
+
+    def _replace_saved_track(
+        self,
+        index: int,
+        placeholder: _SavedTrack,
+        resolved,
+        queue_gen: int,
+        load_gen: int,
+    ) -> None:
+        if (
+            self._queue_gen == queue_gen
+            and self._load_gen == load_gen
+            and 0 <= index < len(self._queue)
+            and self._queue[index] is placeholder
+        ):
+            self._queue[index] = resolved
 
     def _mark_initial_loaded(self, queue_gen: int, load_gen: int, count: int) -> None:
         if self._queue_gen == queue_gen and self._load_gen == load_gen:
@@ -571,7 +681,13 @@ class LowTideApp(App):
             if self._queue_gen != queue_gen or self._load_gen != load_gen:
                 self.call_from_thread(self._on_lookahead_cancelled, load_gen)
                 return
-            url = self.client.get_track_url(self._queue[i])
+            track = self._resolve_saved_track(i, queue_gen, load_gen)
+            if track is None:
+                self.call_from_thread(
+                    self._advance_loaded_count, queue_gen, load_gen, i + 1
+                )
+                continue
+            url = self.client.get_track_url(track)
             if self._queue_gen != queue_gen or self._load_gen != load_gen:
                 self.call_from_thread(self._on_lookahead_cancelled, load_gen)
                 return
@@ -818,7 +934,7 @@ class LowTideApp(App):
 
         # Track may have advanced while we were downloading
         if self._current_track is not track:
-            _try_unlink(path)
+            _try_unlink_private_file(path, self.client.runtime_dir)
             return
 
         # Clean up previous temp file
@@ -841,22 +957,30 @@ class LowTideApp(App):
         """Return local path to downloaded album art, or None."""
         import tempfile
 
-        import requests
+        from lowtide.artwork import load_album_art
 
         try:
-            resp = requests.get(url, timeout=10)
-            resp.raise_for_status()
-            fd, path = tempfile.mkstemp(suffix=".jpg", prefix="lowtide-art-")
-            os.close(fd)
-            with open(path, "wb") as f:
-                f.write(resp.content)
+            image = load_album_art(url)
+            fd, path = tempfile.mkstemp(
+                suffix=".jpg",
+                prefix="art-",
+                dir=self.client.runtime_dir,
+            )
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "wb") as f:
+                image.save(f, format="JPEG", quality=90)
+                f.flush()
+                os.fsync(f.fileno())
             return path
-        except Exception:
+        except (OSError, ValueError):
             return None
 
     def _cleanup_macos_art_temp(self) -> None:
         if self._macos_art_temp_path:
-            _try_unlink(self._macos_art_temp_path)
+            _try_unlink_private_file(
+                self._macos_art_temp_path,
+                self.client.runtime_dir,
+            )
             self._macos_art_temp_path = None
 
     async def action_next_track(self) -> None:
@@ -882,12 +1006,13 @@ class LowTideApp(App):
         await self.player.prev()
 
     async def action_volume_up(self) -> None:
-        self._target_volume = min(100, self._target_volume + 5)
-        await self.player.set_volume(self._target_volume)
-        self.mpris.update_volume(self._target_volume)
+        await self.set_volume(min(100, self._target_volume + 5))
 
     async def action_volume_down(self) -> None:
-        self._target_volume = max(0, self._target_volume - 5)
+        await self.set_volume(max(0, self._target_volume - 5))
+
+    async def set_volume(self, level: int) -> None:
+        self._target_volume = max(0, min(100, level))
         await self.player.set_volume(self._target_volume)
         self.mpris.update_volume(self._target_volume)
 
@@ -903,11 +1028,10 @@ class LowTideApp(App):
 
     def _save_queue(self) -> None:
         from lowtide.tidal_client import CONF_DIR
-        import json as _json
+        from lowtide.secure_io import atomic_write_json
         if not self._queue:
             return
         try:
-            os.makedirs(CONF_DIR, exist_ok=True)
             path = os.path.join(CONF_DIR, "queue.json")
             tracks = []
             for t in self._queue:
@@ -923,58 +1047,38 @@ class LowTideApp(App):
                     "art_url": art_url,
                 })
             data = {"tracks": tracks, "current_idx": self._current_idx}
-            with open(path, "w") as f:
-                _json.dump(data, f)
-        except Exception:
-            pass
+            atomic_write_json(path, data)
+        except (OSError, TypeError, ValueError) as error:
+            log.warning("queue save failed (%s)", type(error).__name__)
 
     @work(thread=True)
     def _restore_queue(self) -> None:
         from lowtide.tidal_client import CONF_DIR
-        import json as _json
+        from lowtide.secure_io import read_json
         path = os.path.join(CONF_DIR, "queue.json")
         try:
-            with open(path) as f:
-                data = _json.load(f)
-        except Exception:
+            data = read_json(path, default=None)
+            if data is None:
+                return
+            if not isinstance(data, dict):
+                raise ValueError("queue state is not an object")
+        except (OSError, TypeError, ValueError) as error:
+            log.warning("queue restore failed (%s)", type(error).__name__)
             return
 
-        saved_idx = data.get("current_idx", 0)
-
-        # Support both new format (tracks[]) and old format (track_ids[])
-        raw = data.get("tracks")
-        if raw:
-            placeholders = [
-                _SavedTrack(
-                    t.get("id"),
-                    t.get("name", ""),
-                    t.get("artist", ""),
-                    t.get("album", ""),
-                    t.get("art_url"),
-                )
-                for t in raw
-            ]
-            track_ids = [t.get("id") for t in raw if t.get("id") is not None]
-        else:
-            # Legacy format
-            track_ids = [i for i in data.get("track_ids", []) if i is not None]
-            placeholders = [_SavedTrack(tid, f"Track {tid}", "", "", None) for tid in track_ids]
-
-        if not track_ids:
+        try:
+            placeholders, saved_idx = _parse_saved_queue(data)
+        except (TypeError, ValueError) as error:
+            log.warning("queue restore failed (%s)", type(error).__name__)
+            return
+        if not placeholders:
             return
 
         # Show the queue immediately from saved metadata — no TIDAL calls yet
         self.call_from_thread(self._show_restored_ui, placeholders, saved_idx)
-
-        # Fetch real track objects in the background for playback
-        tracks = []
-        for tid in track_ids:
-            try:
-                tracks.append(self.client.get_track(tid))
-            except Exception:
-                pass
-        if tracks:
-            self.call_from_thread(self._apply_restored_queue, tracks, saved_idx)
+        # Resolve only the bounded playback lookahead. Remaining placeholders
+        # are fetched lazily if playback reaches or jumps to them.
+        self.call_from_thread(self._apply_restored_queue, placeholders, saved_idx)
 
     def _show_restored_ui(self, placeholders: list, current_idx: int) -> None:
         """Populate the UI immediately from saved metadata before playback is ready."""
@@ -991,8 +1095,11 @@ class LowTideApp(App):
             try:
                 art_url = track.album.image(320)
                 self.query_one(Sidebar).update_art(art_url)
-            except Exception:
-                pass
+            except Exception as error:
+                log.debug(
+                    "saved queue artwork unavailable (%s)",
+                    type(error).__name__,
+                )
 
     def _apply_restored_queue(self, tracks: list, current_idx: int) -> None:
         self.notify(f"Restored queue ({len(tracks)} tracks)", timeout=3)
@@ -1017,3 +1124,4 @@ class LowTideApp(App):
         self.client._clear_manifests()
         await self.mpris.stop()
         await self.player.shutdown()
+        self.client.close()

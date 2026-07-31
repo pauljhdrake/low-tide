@@ -80,7 +80,10 @@ class Scrobbler:
             for cb in self.on_scrobble:
                 try:
                     cb(track)
-                except Exception:
-                    pass
+                except Exception as error:
+                    log.warning(
+                        "scrobble callback failed (%s)",
+                        type(error).__name__,
+                    )
         except Exception as e:
             log.debug("Scrobble failed: %s", e)

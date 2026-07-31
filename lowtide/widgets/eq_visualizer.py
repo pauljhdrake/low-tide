@@ -9,7 +9,10 @@ from textual.widgets import Static
 
 _BARS = 10
 _MAX_HEIGHT = 6
-_FPS = 30
+# Rich terminal repaints are substantially more expensive than a pixel
+# animation. Ten frames per second keeps the optional visualizer responsive
+# without consuming most of a CPU core.
+_FPS = 10
 _FREQ_LABELS = ["32", "64", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
 
 # Sub-character block elements: index 1–8 map to ▁▂▃▄▅▆▇█
@@ -102,6 +105,10 @@ class EQVisualizer(Widget):
         self._bpm = float(bpm) if bpm and 40 <= bpm <= 240 else DEFAULT_BPM
 
     def _tick(self) -> None:
+        # Textual timers continue firing for display:none widgets. Avoid doing a
+        # full 30 FPS simulation/render pass while the optional visualizer is hidden.
+        if not self.display:
+            return
         dt = 1.0 / _FPS
         if self.paused:
             for i in range(_BARS):
@@ -201,31 +208,24 @@ class EQVisualizer(Widget):
                 pk_row = int(pk)
 
                 if row == pk_row and pk > h + 0.4:
-                    # Peak indicator: ▄ dimmed, colored at the peak's gradient position
-                    color = _gradient_color(stops, pk / _MAX_HEIGHT, 0.60)
-                    parts.append(f"[{color}]▄▄[/{color}] ")
+                    parts.append("▄▄ ")
                 elif h >= row + 1:
-                    # Full block: blend the lower and upper halves of the cell using ▄.
-                    # ▄ fills the bottom half in fg; background shows the top half.
-                    # This gives two gradient samples per character row, hiding seams.
-                    c_lo = _gradient_color(stops, row / _MAX_HEIGHT)
-                    c_hi = _gradient_color(stops, (row + 0.5) / _MAX_HEIGHT)
-                    parts.append(f"[{c_lo} on {c_hi}]▄▄[/] ")
+                    parts.append("██ ")
                 elif h > row:
-                    # Tip of bar: sub-block character at exact fractional height,
-                    # color at the precise bar height for a seamless gradient continuation.
                     frac = h - row
                     ch = _BLOCKS[max(1, round(frac * 8))]
-                    color = _gradient_color(stops, h / _MAX_HEIGHT)
-                    parts.append(f"[{color}]{ch}{ch}[/] ")
+                    parts.append(f"{ch}{ch} ")
                 else:
                     parts.append("   ")
-            rows.append("".join(parts))
+            # A single style span per row is much cheaper for Rich/Textual to
+            # parse and diff than one foreground/background span per bar cell.
+            color = _gradient_color(stops, (row + 0.5) / _MAX_HEIGHT)
+            rows.append(f"[{color}]{''.join(parts)}[/{color}]")
 
         if self._show_labels:
             rows.append("".join(f"[dim]{lbl:<3}[/dim]" for lbl in _FREQ_LABELS))
 
-        self.query_one("#eq-bars", Static).update("\n".join(rows))
+        self.query_one("#eq-bars", Static).update("\n".join(rows), layout=False)
 
     def set_theme(self, theme: str) -> None:
         if theme in THEMES:

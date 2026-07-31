@@ -1,22 +1,35 @@
 from __future__ import annotations
 
 import datetime
-import json
 import logging
 import os
+import stat
 import tempfile
 import threading
 import time
 from typing import Optional
+from urllib.parse import urlsplit
 
 import tidalapi
 from tidalapi.media import Quality
 
+from lowtide.runtime import RuntimeWorkspace
+from lowtide.secure_io import (
+    UnsafePathError,
+    atomic_write_json,
+    ensure_private_config_dir,
+    get_config_dir,
+    read_json,
+    repair_private_json_files,
+)
+
 log = logging.getLogger(__name__)
 
-CONF_DIR = os.path.join(os.path.expanduser("~"), ".config", "low-tide")
+CONF_DIR = get_config_dir()
 CONF_PATH = os.path.join(CONF_DIR, "session.json")
 CONFIG_PATH = os.path.join(CONF_DIR, "config.json")
+
+_MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 
 _QUALITY_MAP = {
     "low": Quality.low_96k,
@@ -45,6 +58,9 @@ _MAX_RETRIES = 2
 
 class TidalClient:
     def __init__(self):
+        ensure_private_config_dir()
+        repair_private_json_files(CONF_DIR)
+        self.runtime = RuntimeWorkspace.create()
         self._api_lock = threading.Lock()
         self._quality_lock = threading.Lock()
         self._last_call_time = 0.0
@@ -56,17 +72,23 @@ class TidalClient:
             self._quality_floor = _QUALITY_ORDER.index(quality)
         except ValueError:
             self._quality_floor = 0
-        # Hi-res DASH manifests are written here as temp .mpd files for mpv to
-        # play. Clear any left over from a previous run.
-        self._manifest_dir = os.path.join(tempfile.gettempdir(), "low-tide-manifests")
-        self._clear_manifests()
-        os.makedirs(self._manifest_dir, exist_ok=True)
-        self._try_load_tokens()
+        # Hi-res DASH manifests live in this instance's private runtime directory.
+        self._manifest_dir = self.runtime.manifest_dir
+        try:
+            self._try_load_tokens()
+        except Exception:
+            self.runtime.cleanup()
+            raise
 
     def _clear_manifests(self) -> None:
-        import shutil
+        self.runtime.cleanup_manifests()
 
-        shutil.rmtree(self._manifest_dir, ignore_errors=True)
+    @property
+    def runtime_dir(self) -> str:
+        return self.runtime.directory
+
+    def close(self) -> None:
+        self.runtime.cleanup()
 
     # --- Rate limiting ---
 
@@ -100,10 +122,65 @@ class TidalClient:
 
     def _load_config(self) -> dict:
         try:
-            with open(CONFIG_PATH) as f:
-                return json.load(f)
-        except Exception:
+            raw = read_json(CONFIG_PATH, default={})
+        except UnsafePathError:
+            raise
+        except (OSError, ValueError, TypeError) as error:
+            log.warning("config load failed (%s)", type(error).__name__)
             return {}
+        if not isinstance(raw, dict):
+            log.warning("config load failed (top-level value is not an object)")
+            return {}
+
+        config: dict = {}
+        quality = raw.get("quality", "lossless")
+        config["quality"] = quality if quality in _QUALITY_MAP else "lossless"
+        replaygain = raw.get("replaygain", "album")
+        config["replaygain"] = replaygain if replaygain in {"album", "track", "no"} else "album"
+        config["alsa_output"] = raw.get("alsa_output") is True
+
+        volume = raw.get("volume", 80)
+        config["volume"] = volume if isinstance(volume, int) and not isinstance(volume, bool) and 0 <= volume <= 100 else 80
+        crossfade = raw.get("crossfade", 0)
+        config["crossfade"] = crossfade if isinstance(crossfade, int) and not isinstance(crossfade, bool) and 0 <= crossfade <= 30 else 0
+
+        device = raw.get("alsa_device")
+        if isinstance(device, str) and 0 < len(device) <= 128 and all(
+            ch.isalnum() or ch in "_.:,=+-" for ch in device
+        ):
+            config["alsa_device"] = device
+        bit_depth = raw.get("alsa_bit_depth")
+        if bit_depth in (16, 24, 32):
+            config["alsa_bit_depth"] = bit_depth
+        samplerate = raw.get("alsa_samplerate")
+        if (
+            isinstance(samplerate, int)
+            and not isinstance(samplerate, bool)
+            and 8_000 <= samplerate <= 768_000
+        ):
+            config["alsa_samplerate"] = samplerate
+
+        music_dir = raw.get("music_dir")
+        if isinstance(music_dir, str):
+            config["music_dir"] = music_dir
+        elif isinstance(music_dir, list) and all(isinstance(item, str) for item in music_dir):
+            config["music_dir"] = music_dir
+
+        theme = raw.get("eq_theme", "mono")
+        config["eq_theme"] = theme if theme in {"classic", "fire", "ice", "mono", "neon"} else "mono"
+        config["eq_labels"] = raw.get("eq_labels") is True
+        background = raw.get("background", "ansi_default")
+        config["background"] = (
+            background
+            if isinstance(background, str)
+            and len(background) <= 128
+            and not any(ord(ch) < 32 for ch in background)
+            else "ansi_default"
+        )
+        lastfm = raw.get("lastfm")
+        if isinstance(lastfm, dict):
+            config["lastfm"] = lastfm
+        return config
 
     def _load_quality(self) -> str:
         data = self._load_config()
@@ -117,37 +194,56 @@ class TidalClient:
 
     def _try_load_tokens(self) -> None:
         try:
-            with open(CONF_PATH) as f:
-                data = json.load(f)
+            data = read_json(CONF_PATH, default=None)
+            if data is None:
+                return
+            if not isinstance(data, dict) or not isinstance(data.get("access_token"), str):
+                raise ValueError("invalid OAuth session structure")
             expiry = None
             if data.get("expiry_time"):
                 expiry = datetime.datetime.fromisoformat(data["expiry_time"])
+            is_pkce = data.get("is_pkce", False)
+            if not isinstance(is_pkce, bool):
+                raise ValueError("invalid OAuth session structure")
             self.session.load_oauth_session(
                 token_type=data.get("token_type", "Bearer"),
                 access_token=data["access_token"],
                 refresh_token=data.get("refresh_token"),
                 expiry_time=expiry,
+                is_pkce=is_pkce,
             )
-        except Exception:
-            pass
+        except UnsafePathError:
+            raise
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            log.warning("OAuth session could not be loaded (%s)", type(error).__name__)
 
     def _save_tokens(self) -> None:
-        os.makedirs(CONF_DIR, exist_ok=True)
         expiry = getattr(self.session, "expiry_time", None)
         data = {
             "access_token": self.session.access_token,
             "refresh_token": self.session.refresh_token,
             "token_type": getattr(self.session, "token_type", "Bearer"),
             "expiry_time": expiry.isoformat() if expiry else None,
+            "is_pkce": bool(getattr(self.session, "is_pkce", False)),
         }
-        with open(CONF_PATH, "w") as f:
-            json.dump(data, f)
+        atomic_write_json(CONF_PATH, data)
 
     def ensure_login(self) -> None:
-        if self.session.check_login():
+        logged_in = self.session.check_login()
+        needs_pkce = (
+            self.session.config.quality == Quality.hi_res_lossless
+            and not getattr(self.session, "is_pkce", False)
+        )
+        if logged_in and not needs_pkce:
+            # Persist a refresh performed by check_login without printing token data.
+            self._save_tokens()
             return
         print("==== TIDAL Login ====")
-        self.session.login_oauth_simple()
+        if needs_pkce:
+            print("La calidad MAX requiere volver a autenticar con PKCE.")
+            self.session.login_pkce()
+        else:
+            self.session.login_oauth_simple()
         self._save_tokens()
 
     def me(self):
@@ -207,8 +303,8 @@ class TidalClient:
             if track is None:
                 track = _find(_candidates(title))
             return track
-        except Exception:
-            pass
+        except Exception as error:
+            log.debug("track resolution failed (%s)", type(error).__name__)
         return None
 
     # --- Library ---
@@ -274,7 +370,6 @@ class TidalClient:
         byte-stream (lossless and below) tracks, or a path to a temp .mpd manifest
         for segmented hi-res DASH tracks. Falls back down the quality tiers if the
         subscription rejects the configured one. Returns None if no tier works."""
-        name = getattr(track, "name", "?")
         for idx in range(self._quality_floor, len(_QUALITY_ORDER)):
             quality = _QUALITY_ORDER[idx]
             try:
@@ -282,8 +377,8 @@ class TidalClient:
             except Exception as e:
                 status = getattr(getattr(e, "response", None), "status_code", None)
                 log.warning(
-                    "get_track_url failed for %r at %s: %s: %s",
-                    name, getattr(quality, "value", quality), type(e).__name__, e,
+                    "get_track_url failed at %s (%s, status=%s)",
+                    getattr(quality, "value", quality), type(e).__name__, status,
                 )
                 if status in (401, 403):
                     # Not entitled to this tier; stop attempting it going forward.
@@ -303,22 +398,90 @@ class TidalClient:
             finally:
                 self.session.config.quality = prev
 
+        stream_info = {
+            "audio_quality": getattr(stream, "audio_quality", None),
+            "bit_depth": getattr(stream, "bit_depth", None),
+            "sample_rate": getattr(stream, "sample_rate", None),
+        }
+        setattr(track, "_lowtide_stream_info", stream_info)
+        actual = stream_info["audio_quality"]
+        if actual is not None and actual != quality:
+            log.warning(
+                "TIDAL delivered %s for requested %s",
+                getattr(actual, "value", actual),
+                getattr(quality, "value", quality),
+            )
+
         manifest = stream.get_stream_manifest()
         if getattr(manifest, "manifest_mime_type", "") == "application/dash+xml":
             # Segmented hi-res: hand mpv the decoded MPD manifest as a temp file.
             return self._write_manifest(stream.manifest)
         # Byte-stream manifest: a single directly-playable URL.
         urls = manifest.get_urls()
-        return urls[0] if urls else None
+        if not urls:
+            return None
+        url = urls[0]
+        if urlsplit(url).scheme.lower() != "https":
+            raise ValueError("TIDAL stream URL did not use HTTPS")
+        return url
 
     def _write_manifest(self, b64_manifest: str) -> str:
         """Decode a base64 DASH manifest and write it to a temp .mpd file."""
         import base64
+        import binascii
+        from defusedxml import ElementTree as ET
 
-        os.makedirs(self._manifest_dir, exist_ok=True)
+        if not isinstance(b64_manifest, (str, bytes)):
+            raise ValueError("DASH manifest was not base64 text")
+        encoded = b64_manifest.encode("ascii") if isinstance(b64_manifest, str) else b64_manifest
+        if len(encoded) > ((_MAX_MANIFEST_BYTES + 2) // 3) * 4 + 4:
+            raise ValueError("DASH manifest exceeds size limit")
+        try:
+            decoded = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as error:
+            raise ValueError("DASH manifest had invalid base64") from error
+        if not decoded or len(decoded) > _MAX_MANIFEST_BYTES:
+            raise ValueError("DASH manifest exceeds size limit")
+        if b"<!DOCTYPE" in decoded.upper() or b"<!ENTITY" in decoded.upper():
+            raise ValueError("DASH manifest contained forbidden declarations")
+        try:
+            root = ET.fromstring(decoded)
+        except ET.ParseError as error:
+            raise ValueError("DASH manifest was not valid XML") from error
+        if root.tag.rsplit("}", 1)[-1] != "MPD":
+            raise ValueError("DASH manifest root was not MPD")
+        uri_attributes = {"href", "initialization", "media", "sourceURL"}
+        for element in root.iter():
+            if element.tag.rsplit("}", 1)[-1] == "BaseURL" and element.text:
+                scheme = urlsplit(element.text.strip()).scheme.lower()
+                if scheme and scheme != "https":
+                    raise ValueError("DASH manifest contained a non-HTTPS BaseURL")
+            for key, value in element.attrib.items():
+                if key.rsplit("}", 1)[-1] in uri_attributes:
+                    scheme = urlsplit(value.strip()).scheme.lower()
+                    if scheme and scheme != "https":
+                        raise ValueError("DASH manifest contained a non-HTTPS URL")
+
         fd, path = tempfile.mkstemp(suffix=".mpd", dir=self._manifest_dir)
-        with os.fdopen(fd, "wb") as f:
-            f.write(base64.b64decode(b64_manifest))
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "wb") as f:
+                fd = -1
+                f.write(decoded)
+                f.flush()
+                os.fsync(f.fileno())
+            st = os.lstat(path)
+            if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+                raise RuntimeError("DASH manifest file validation failed")
+            self.runtime.track_manifest(path)
+        except Exception:
+            if fd >= 0:
+                os.close(fd)
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
+            raise
         return path
 
     def get_lyrics(self, track) -> tuple[str, str]:
@@ -331,10 +494,16 @@ class TidalClient:
 
     def get_track_info(self, track) -> dict:
         """Returns extended track metadata for display."""
+        stream_info = getattr(track, "_lowtide_stream_info", {})
+        if not isinstance(stream_info, dict):
+            stream_info = {}
         return {
             "bpm": getattr(track, "bpm", None),
             "explicit": getattr(track, "explicit", False),
-            "audio_quality": getattr(track, "audio_quality", None),
+            "audio_quality": stream_info.get("audio_quality")
+            or getattr(track, "audio_quality", None),
+            "bit_depth": stream_info.get("bit_depth"),
+            "sample_rate": stream_info.get("sample_rate"),
             "isrc": getattr(track, "isrc", None),
         }
 

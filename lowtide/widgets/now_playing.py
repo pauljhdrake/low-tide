@@ -28,15 +28,24 @@ def _bar(pos: float, dur: float, width: int = 26) -> str:
     return "─" * filled + "●" + "─" * (width - filled - 1)
 
 
-def _quality_label(audio_quality: str | None, bpm: float | None, explicit: bool) -> str:
+def _quality_label(
+    audio_quality: str | None,
+    bpm: float | None,
+    explicit: bool,
+    bit_depth: int | None = None,
+    sample_rate: int | None = None,
+) -> str:
     parts = []
     if audio_quality:
+        audio_quality = getattr(audio_quality, "value", audio_quality)
         label = {
             "LOW": "AAC 96k",
             "HIGH": "AAC 320k",
             "LOSSLESS": "FLAC",
             "HI_RES_LOSSLESS": "FLAC MAX",
         }.get(audio_quality, audio_quality)
+        if str(label).startswith("FLAC") and bit_depth and sample_rate:
+            label = f"{label} {bit_depth}-bit/{sample_rate / 1000:g} kHz"
         parts.append(label)
     if bpm:
         parts.append(f"{int(bpm)} BPM")
@@ -219,6 +228,8 @@ class NowPlayingBar(Widget):
             info.get("audio_quality"),
             info.get("bpm"),
             info.get("explicit", False),
+            info.get("bit_depth"),
+            info.get("sample_rate"),
         )
 
     def set_lyrics(self, lines: list[LyricLine]) -> None:

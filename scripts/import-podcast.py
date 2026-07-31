@@ -13,18 +13,31 @@ TIDAL, and creates a playlist. Requires an active low-tide session
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import re
+import socket
 import sys
 import time
-import urllib.request
-import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import urljoin, urlsplit
+
+import requests
+from defusedxml import ElementTree as ET
 
 # Allow running from the repo root without installing
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from lowtide.tidal_client import TidalClient
+
+_MAX_FEED_BYTES = 5 * 1024 * 1024
+_MAX_REDIRECTS = 3
+_FEED_TYPES = {
+    "application/atom+xml",
+    "application/rss+xml",
+    "application/xml",
+    "text/xml",
+}
 
 
 # ── HTML parsing ──────────────────────────────────────────────────────────────
@@ -107,12 +120,76 @@ def _parse_track_line(text: str) -> tuple[str, str] | None:
 
 # ── RSS feed ──────────────────────────────────────────────────────────────────
 
+def _validate_feed_url(url: str) -> None:
+    parsed = urlsplit(url)
+    if parsed.scheme.lower() != "https":
+        raise ValueError("feed URL must use HTTPS")
+    if not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("feed URL has an invalid authority")
+    try:
+        addresses = socket.getaddrinfo(
+            parsed.hostname,
+            parsed.port or 443,
+            type=socket.SOCK_STREAM,
+        )
+    except OSError as error:
+        raise ValueError("feed hostname could not be resolved") from error
+    if any(not ipaddress.ip_address(item[4][0]).is_global for item in addresses):
+        raise ValueError("feed hostname resolved to a non-public address")
+
+
+def _download_feed(url: str) -> bytes:
+    current = url
+    with requests.Session() as session:
+        session.headers["User-Agent"] = "low-tide/0.1"
+        for redirect in range(_MAX_REDIRECTS + 1):
+            _validate_feed_url(current)
+            with session.get(
+                current,
+                timeout=(3.05, 15),
+                stream=True,
+                allow_redirects=False,
+            ) as response:
+                if response.is_redirect or response.is_permanent_redirect:
+                    if redirect >= _MAX_REDIRECTS:
+                        raise ValueError("feed exceeded redirect limit")
+                    location = response.headers.get("Location")
+                    if not location:
+                        raise ValueError("feed redirect had no location")
+                    current = urljoin(current, location)
+                    continue
+                response.raise_for_status()
+                content_type = (
+                    response.headers.get("Content-Type", "")
+                    .split(";", 1)[0]
+                    .lower()
+                )
+                if content_type not in _FEED_TYPES:
+                    raise ValueError("feed has an unsupported content type")
+                raw_length = response.headers.get("Content-Length")
+                if raw_length:
+                    try:
+                        if int(raw_length) > _MAX_FEED_BYTES:
+                            raise ValueError("feed exceeds size limit")
+                    except ValueError as error:
+                        raise ValueError("feed has an invalid content length") from error
+                chunks: list[bytes] = []
+                total = 0
+                for chunk in response.iter_content(64 * 1024):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > _MAX_FEED_BYTES:
+                        raise ValueError("feed exceeds size limit")
+                    chunks.append(chunk)
+                return b"".join(chunks)
+    raise ValueError("feed redirect handling failed")
+
+
 def _fetch_feed(url: str) -> tuple[str, list[dict]]:
     """Return (show_title, episodes) where episodes are newest-first dicts."""
     print("Fetching feed…")
-    req = urllib.request.Request(url, headers={"User-Agent": "low-tide/1.0"})
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        raw = resp.read()
+    raw = _download_feed(url)
 
     root = ET.fromstring(raw)
     ns = {"content": "http://purl.org/rss/1.0/modules/content/"}

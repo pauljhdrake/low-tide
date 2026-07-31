@@ -127,8 +127,11 @@ class Recommender:
                         key = (a_name, t_name)
                         if key not in candidates or candidates[key] < artist_weight:
                             candidates[key] = artist_weight
-                except Exception:
-                    pass
+                except Exception as error:
+                    log.debug(
+                        "genre artist expansion failed (%s)",
+                        type(error).__name__,
+                    )
         except Exception as e:
             log.debug("genre playlist: top artists failed for %s: %s", genre, e)
 
@@ -179,8 +182,11 @@ class Recommender:
                         score = artist_sim * boost * 0.7  # discount vs direct similar tracks
                         if key not in candidates or candidates[key] < score:
                             candidates[key] = score
-                except Exception:
-                    pass
+                except Exception as error:
+                    log.debug(
+                        "similar artist expansion failed (%s)",
+                        type(error).__name__,
+                    )
         except Exception as e:
             log.debug("track radio: similar artists failed: %s", e)
 
@@ -213,8 +219,11 @@ class Recommender:
             try:
                 a = self._network.get_artist(artist_name)
                 seed_tags.update(_artist_tags(a))
-            except Exception:
-                pass
+            except Exception as error:
+                log.debug(
+                    "seed tag lookup failed (%s)",
+                    type(error).__name__,
+                )
 
         p = _MODE_PARAMS[mode]
 
@@ -240,8 +249,11 @@ class Recommender:
                             score = artist_sim * boost
                             if key not in candidates or candidates[key] < score:
                                 candidates[key] = score
-                    except Exception:
-                        pass
+                    except Exception as error:
+                        log.debug(
+                            "recommendation candidate expansion failed (%s)",
+                            type(error).__name__,
+                        )
             except Exception as e:
                 log.debug("ride the tide: failed for artist %s: %s", artist_name, e)
 
@@ -296,8 +308,11 @@ class Recommender:
             for album in albums[:5]:
                 try:
                     all_tracks.extend(self._client.get_album_tracks(album))
-                except Exception:
-                    pass
+                except Exception as error:
+                    log.debug(
+                        "fallback album lookup failed (%s)",
+                        type(error).__name__,
+                    )
             seed_title = getattr(track, "name", "").lower()
             candidates = [t for t in all_tracks if getattr(t, "name", "").lower() != seed_title]
             candidates.sort(
@@ -332,8 +347,11 @@ class Recommender:
                         for t in self._client.get_album_tracks(album):
                             play_count = self._store.get(t)
                             results.append((t, _novelty(play_count)))
-                    except Exception:
-                        pass
+                    except Exception as error:
+                        log.debug(
+                            "fallback recommendation album failed (%s)",
+                            type(error).__name__,
+                        )
             except Exception as e:
                 log.debug("fallback ride the tide failed for %s: %s", artist_name, e)
 

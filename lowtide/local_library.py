@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-import json
 import os
+import stat
+from pathlib import Path
 from typing import Callable
 
 import mutagen
 
 from lowtide.local_track import LocalAlbum, LocalArtist, LocalTrack
+from lowtide.secure_io import atomic_write_json, read_json
 from lowtide.tidal_client import CONF_DIR
 
 CACHE_PATH = os.path.join(CONF_DIR, "local_index.json")
@@ -76,7 +78,14 @@ def _read_tags(path: str) -> dict | None:
 
 class LocalLibrary:
     def __init__(self, music_dirs: list[str]):
-        self._dirs = [os.path.expanduser(d) for d in music_dirs]
+        self._dirs: list[str] = []
+        for raw in music_dirs:
+            try:
+                resolved = Path(os.path.expanduser(raw)).resolve(strict=True)
+            except OSError:
+                continue
+            if resolved.is_dir():
+                self._dirs.append(str(resolved))
         self._tracks: list[LocalTrack] = []
 
     def load(self, progress_cb: Callable[[str], None] | None = None) -> None:
@@ -95,6 +104,18 @@ class LocalLibrary:
                     if os.path.splitext(fname)[1].lower() not in AUDIO_EXTENSIONS:
                         continue
                     path = os.path.join(root, fname)
+                    try:
+                        file_st = os.lstat(path)
+                        resolved = os.path.realpath(path)
+                        if (
+                            not stat.S_ISREG(file_st.st_mode)
+                            or stat.S_ISLNK(file_st.st_mode)
+                            or not Path(resolved).is_relative_to(Path(music_dir))
+                        ):
+                            continue
+                        path = resolved
+                    except OSError:
+                        continue
                     found_paths.add(path)
                     mtime = os.path.getmtime(path)
                     cached = cache_by_path.get(path)
@@ -136,21 +157,27 @@ class LocalLibrary:
 
     def _read_cache(self) -> dict:
         try:
-            with open(CACHE_PATH) as f:
-                data = json.load(f)
+            data = read_json(CACHE_PATH, default={})
+            if not isinstance(data, dict):
+                raise ValueError("local library cache is not an object")
             if data.get("version") != CACHE_VERSION:
                 return {}
             return data
-        except Exception:
+        except (OSError, RuntimeError, TypeError, ValueError):
             return {}
 
     def _write_cache(self, tracks: list[dict]) -> None:
         try:
-            os.makedirs(CONF_DIR, exist_ok=True)
-            with open(CACHE_PATH, "w") as f:
-                json.dump({"version": CACHE_VERSION, "tracks": tracks}, f)
-        except Exception:
-            pass
+            atomic_write_json(
+                CACHE_PATH,
+                {"version": CACHE_VERSION, "tracks": tracks},
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            import logging
+            logging.getLogger(__name__).warning(
+                "local library cache save failed (%s)",
+                type(error).__name__,
+            )
 
     @property
     def tracks(self) -> list[LocalTrack]:

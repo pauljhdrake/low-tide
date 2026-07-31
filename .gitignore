@@ -22,11 +22,10 @@ build/
 dist/
 *.egg-info/
 
-# uv lockfile (uv is not the project's build tool)
-uv.lock
-
 # TIDAL session tokens — never commit credentials
 -/
 ~/.config/low-tide/
 CLAUDE.md
 lastfm_api
+run.err
+*.err
