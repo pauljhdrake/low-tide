@@ -25,3 +25,13 @@ low-tide = "lowtide.main:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["lowtide*"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    # dbus-next uses typing.no_type_check_decorator, deprecated in 3.13+
+    "ignore:.*no_type_check_decorator.*:DeprecationWarning",
+]

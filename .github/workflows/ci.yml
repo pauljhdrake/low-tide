@@ -9,3 +9,5 @@ jobs:
         with:
           python-version: "3.x"
       - run: python -m py_compile $(find lowtide -name "*.py")
+      - run: pip install -e ".[test]"
+      - run: python -m pytest -q
