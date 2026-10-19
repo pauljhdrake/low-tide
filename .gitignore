@@ -30,3 +30,6 @@ uv.lock
 ~/.config/low-tide/
 CLAUDE.md
 lastfm_api
+
+# Stray terminal captures
+*.err

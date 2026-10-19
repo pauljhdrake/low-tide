@@ -391,12 +391,22 @@ class LowTideApp(App):
         self.scrobbler.update(position, duration)
 
         # Crossfade: fade out as current track approaches its end
+        in_fade_window = False
         if self.player.crossfade_secs > 0 and duration > 0 and not paused:
             remaining = duration - position
             if 0 < remaining <= self.player.crossfade_secs:
+                in_fade_window = True
                 fade_vol = max(0, int((remaining / self.player.crossfade_secs) * self._target_volume))
                 await self.player._cmd(["set_property", "volume", fade_vol])
                 self._crossfading = True
+        # Left the fade window without a track change (e.g. seeked back):
+        # restore the volume rather than waiting for the next track to start.
+        if self._crossfading and not in_fade_window and not paused:
+            await self._end_crossfade()
+
+    async def _end_crossfade(self) -> None:
+        self._crossfading = False
+        await self.player.set_volume(self._target_volume)
 
     async def _on_mpv_track_end(self) -> None:
         """Called when a track ends. Handles queue exhaustion in weighted shuffle modes."""
@@ -422,8 +432,7 @@ class LowTideApp(App):
     async def _on_mpv_track_start(self) -> None:
         # Restore volume after a crossfade fade-out
         if self._crossfading:
-            self._crossfading = False
-            await self.player.set_volume(self._target_volume)
+            await self._end_crossfade()
 
         pos = await self.player.get_playlist_pos()
         if 0 <= pos < len(self._mpv_playlist):
@@ -464,9 +473,22 @@ class LowTideApp(App):
         else:
             _, lrc = self.client.get_lyrics(track)
             lines = parse_lrc(lrc) if lrc else []
-        self.call_from_thread(self._apply_track_extras, info, lines)
+        self.call_from_thread(self._apply_track_extras, track, info, lines)
+        track_id = getattr(track, "id", None)
+        if not isinstance(track, LocalTrack) and track_id is not None:
+            # Slow on first call (fetches all favourites), so do it after lyrics.
+            fav = self.client.is_favourite_track(track_id)
+            self.call_from_thread(self._apply_favourite_lookup, track, fav)
 
-    def _apply_track_extras(self, info: dict, lines: list) -> None:
+    def _apply_favourite_lookup(self, track, favourited: bool) -> None:
+        if self._current_track is not track:
+            return
+        self._current_favourited = favourited
+        self.query_one(NowPlayingBar).favourited = favourited
+
+    def _apply_track_extras(self, track, info: dict, lines: list) -> None:
+        if self._current_track is not track:
+            return
         bar = self.query_one(NowPlayingBar)
         bar.set_track_info(info)
         bar.set_lyrics(lines)
@@ -742,6 +764,8 @@ class LowTideApp(App):
     async def action_toggle_crossfade(self) -> None:
         if self.player.crossfade_secs > 0:
             self.player.crossfade_secs = 0
+            if self._crossfading:
+                await self._end_crossfade()
             self.query_one(NowPlayingBar).crossfade = False
             self.notify("Crossfade off")
         else:
@@ -752,22 +776,48 @@ class LowTideApp(App):
             self.notify(f"Crossfade {self.player.crossfade_secs}s")
 
     async def action_toggle_shuffle(self) -> None:
-        self.player.shuffle_mode = (self.player.shuffle_mode + 1) % 4
-        mode = self.player.shuffle_mode
+        self._set_shuffle_mode((self.player.shuffle_mode + 1) % 4)
+
+    def _set_shuffle_mode(self, mode: int) -> None:
+        self.player.shuffle_mode = mode
         self.query_one(NowPlayingBar).shuffle_mode = mode
         self.mpris.update_shuffle(mode != SHUFFLE_OFF)
         self.notify(f"Shuffle: {SHUFFLE_LABELS[mode]}")
 
+    async def set_shuffle_from_mpris(self, shuffle: bool) -> None:
+        # MPRIS shuffle is on/off; "on" keeps any active mode (favourites,
+        # discovery) and only switches to random if shuffle was off.
+        if shuffle and self.player.shuffle_mode == SHUFFLE_OFF:
+            self._set_shuffle_mode(SHUFFLE_RANDOM)
+        elif not shuffle and self.player.shuffle_mode != SHUFFLE_OFF:
+            self._set_shuffle_mode(SHUFFLE_OFF)
+
     async def action_toggle_repeat(self) -> None:
-        await self.player.toggle_repeat()
+        await self._set_repeat(not self.player.repeat)
+
+    async def _set_repeat(self, repeat: bool) -> None:
+        if repeat != self.player.repeat:
+            await self.player.toggle_repeat()
         self.query_one(NowPlayingBar).repeat = self.player.repeat
         self.mpris.update_loop_status(self.player.repeat)
         state = "on" if self.player.repeat else "off"
         self.notify(f"Repeat {state}")
 
+    async def set_loop_from_mpris(self, status: str) -> None:
+        # Only whole-queue repeat exists, so "Track" maps to it too; the
+        # reported LoopStatus then reads "Playlist", the state actually applied.
+        if status not in ("None", "Track", "Playlist"):
+            return
+        repeat = status != "None"
+        if repeat != self.player.repeat:
+            await self._set_repeat(repeat)
+        else:
+            self.mpris.update_loop_status(self.player.repeat)
+
     @work(thread=True)
     def action_toggle_favourite(self) -> None:
-        if self._current_track is None:
+        from lowtide.local_track import LocalTrack
+        if self._current_track is None or isinstance(self._current_track, LocalTrack):
             return
         track_id = getattr(self._current_track, "id", None)
         if track_id is None:
@@ -882,12 +932,13 @@ class LowTideApp(App):
         await self.player.prev()
 
     async def action_volume_up(self) -> None:
-        self._target_volume = min(100, self._target_volume + 5)
-        await self.player.set_volume(self._target_volume)
-        self.mpris.update_volume(self._target_volume)
+        await self.set_volume_level(self._target_volume + 5)
 
     async def action_volume_down(self) -> None:
-        self._target_volume = max(0, self._target_volume - 5)
+        await self.set_volume_level(self._target_volume - 5)
+
+    async def set_volume_level(self, level: int) -> None:
+        self._target_volume = max(0, min(100, level))
         await self.player.set_volume(self._target_volume)
         self.mpris.update_volume(self._target_volume)
 
@@ -966,15 +1017,34 @@ class LowTideApp(App):
         # Show the queue immediately from saved metadata — no TIDAL calls yet
         self.call_from_thread(self._show_restored_ui, placeholders, saved_idx)
 
-        # Fetch real track objects in the background for playback
+        # Fetch real track objects in the background for playback. Tracks that
+        # fail are dropped, so remap saved_idx onto the shorter list: start at
+        # the saved track, or the next one that loaded if it failed itself.
+        from lowtide.local_library import LocalLibrary
         tracks = []
-        for tid in track_ids:
-            try:
-                tracks.append(self.client.get_track(tid))
-            except Exception:
-                pass
+        start_idx = 0
+        for i, placeholder in enumerate(placeholders):
+            tid = placeholder.id
+            if tid is None:
+                continue
+            if isinstance(tid, str):
+                # Local tracks are saved with their file path as ID (TIDAL IDs
+                # are ints), so rebuild them from the file instead of TIDAL.
+                track = LocalLibrary.track_from_path(tid)
+                if track is None:
+                    continue
+                tracks.append(track)
+            else:
+                try:
+                    tracks.append(self.client.get_track(tid))
+                except Exception:
+                    continue
+            if i < saved_idx:
+                start_idx += 1
         if tracks:
-            self.call_from_thread(self._apply_restored_queue, tracks, saved_idx)
+            if start_idx >= len(tracks):
+                start_idx = 0
+            self.call_from_thread(self._apply_restored_queue, tracks, start_idx)
 
     def _show_restored_ui(self, placeholders: list, current_idx: int) -> None:
         """Populate the UI immediately from saved metadata before playback is ready."""
@@ -1013,7 +1083,9 @@ class LowTideApp(App):
     async def on_unmount(self) -> None:
         self._save_queue()
         self._play_count_store.save()
+        self.scrobbler.shutdown()
         self._cleanup_macos_art_temp()
         self.client._clear_manifests()
+        self.client.save_tokens_if_changed()
         await self.mpris.stop()
         await self.player.shutdown()

@@ -12,6 +12,8 @@ from typing import Optional
 import tidalapi
 from tidalapi.media import Quality
 
+from lowtide.local_track import LocalTrack
+
 log = logging.getLogger(__name__)
 
 CONF_DIR = os.path.join(os.path.expanduser("~"), ".config", "low-tide")
@@ -48,6 +50,11 @@ class TidalClient:
         self._api_lock = threading.Lock()
         self._quality_lock = threading.Lock()
         self._last_call_time = 0.0
+        self._saved_access_token: str | None = None
+        # IDs of the user's favourite tracks, fetched lazily on first lookup and
+        # kept in sync by add/remove_favourite_track.
+        self._fav_lock = threading.Lock()
+        self._fav_track_ids: set[int] | None = None
         quality = self._load_quality()
         self.session = tidalapi.Session(tidalapi.Config(quality=quality))
         # Highest tier we'll attempt for stream URLs. Starts at the configured
@@ -57,11 +64,12 @@ class TidalClient:
         except ValueError:
             self._quality_floor = 0
         # Hi-res DASH manifests are written here as temp .mpd files for mpv to
-        # play. Clear any left over from a previous run.
-        self._manifest_dir = os.path.join(tempfile.gettempdir(), "low-tide-manifests")
-        self._clear_manifests()
-        os.makedirs(self._manifest_dir, exist_ok=True)
+        # play. The dir is per process so a second instance doesn't delete
+        # manifests the first is still playing; it's removed on exit.
+        self._manifest_dir = tempfile.mkdtemp(prefix="low-tide-manifests-")
         self._try_load_tokens()
+        # The loaded access token may have been refreshed during login.
+        self.save_tokens_if_changed()
 
     def _clear_manifests(self) -> None:
         import shutil
@@ -122,6 +130,8 @@ class TidalClient:
             expiry = None
             if data.get("expiry_time"):
                 expiry = datetime.datetime.fromisoformat(data["expiry_time"])
+            os.chmod(CONF_PATH, 0o600)  # older versions wrote it world-readable
+            self._saved_access_token = data["access_token"]
             self.session.load_oauth_session(
                 token_type=data.get("token_type", "Bearer"),
                 access_token=data["access_token"],
@@ -140,8 +150,23 @@ class TidalClient:
             "token_type": getattr(self.session, "token_type", "Bearer"),
             "expiry_time": expiry.isoformat() if expiry else None,
         }
-        with open(CONF_PATH, "w") as f:
+        # Credentials: create owner-only, and tighten a file that already
+        # exists with looser permissions from older versions.
+        fd = os.open(CONF_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as f:
             json.dump(data, f)
+        self._saved_access_token = self.session.access_token
+
+    def save_tokens_if_changed(self) -> None:
+        """Persist the session if tidalapi refreshed the access token, so the
+        next start doesn't have to refresh it again."""
+        token = getattr(self.session, "access_token", None)
+        if token and self._saved_access_token and token != self._saved_access_token:
+            try:
+                self._save_tokens()
+            except Exception as e:
+                log.warning("Could not save refreshed TIDAL tokens: %s", e)
 
     def ensure_login(self) -> None:
         if self.session.check_login():
@@ -273,7 +298,10 @@ class TidalClient:
         """Return something mpv can play for this track: a direct stream URL for
         byte-stream (lossless and below) tracks, or a path to a temp .mpd manifest
         for segmented hi-res DASH tracks. Falls back down the quality tiers if the
-        subscription rejects the configured one. Returns None if no tier works."""
+        subscription rejects the configured one. Returns None if no tier works.
+        Local files are returned as their path."""
+        if isinstance(track, LocalTrack):
+            return track.path
         name = getattr(track, "name", "?")
         for idx in range(self._quality_floor, len(_QUALITY_ORDER)):
             quality = _QUALITY_ORDER[idx]
@@ -340,14 +368,37 @@ class TidalClient:
 
     # --- Favourites ---
 
+    def is_favourite_track(self, track_id: int) -> bool:
+        """Whether track_id is in the user's favourites. The first call fetches
+        the full favourites list, so call this from a worker thread."""
+        with self._fav_lock:
+            if self._fav_track_ids is None:
+                try:
+                    tracks = self.get_favorite_tracks()
+                except Exception as e:
+                    log.warning("Could not fetch favourite tracks: %s", e)
+                    return False
+                self._fav_track_ids = {t.id for t in tracks}
+            return track_id in self._fav_track_ids
+
     def add_favourite_track(self, track_id: int) -> bool:
         try:
-            return self._api_call(self.session.user.favorites.add_track, track_id)
+            ok = self._api_call(self.session.user.favorites.add_track, track_id)
         except Exception:
             return False
+        if ok:
+            with self._fav_lock:
+                if self._fav_track_ids is not None:
+                    self._fav_track_ids.add(track_id)
+        return ok
 
     def remove_favourite_track(self, track_id: int) -> bool:
         try:
-            return self._api_call(self.session.user.favorites.remove_track, str(track_id))
+            ok = self._api_call(self.session.user.favorites.remove_track, str(track_id))
         except Exception:
             return False
+        if ok:
+            with self._fav_lock:
+                if self._fav_track_ids is not None:
+                    self._fav_track_ids.discard(track_id)
+        return ok

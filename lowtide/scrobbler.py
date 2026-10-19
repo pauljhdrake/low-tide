@@ -1,15 +1,19 @@
 from __future__ import annotations
 
-import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
 log = logging.getLogger(__name__)
 
 
 class Scrobbler:
-    """Last.fm scrobbler. Silently does nothing if not configured."""
+    """Last.fm scrobbler. Silently does nothing if not configured.
+
+    Network calls are blocking pylast requests, so they run on a single
+    background thread to keep the UI responsive when Last.fm is slow.
+    """
 
     def __init__(self, config: dict):
         self._network = None
@@ -17,6 +21,7 @@ class Scrobbler:
         self._track_start_time: int = 0
         self._scrobbled: bool = False
         self.on_scrobble: list[Callable] = []
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="scrobbler")
         self._setup(config.get("lastfm", {}))
 
     def _setup(self, cfg: dict) -> None:
@@ -45,6 +50,9 @@ class Scrobbler:
         self._current_track = track
         self._track_start_time = int(time.time())
         self._scrobbled = False
+        self._executor.submit(self._update_now_playing, track)
+
+    def _update_now_playing(self, track) -> None:
         try:
             artist = getattr(getattr(track, "artist", None), "name", "")
             title = getattr(track, "name", "")
@@ -61,10 +69,11 @@ class Scrobbler:
             return
         threshold = min(duration * 0.5, 240.0)
         if position >= threshold:
-            self._scrobble()
+            # Mark now so later ticks don't queue duplicates; reset on failure.
+            self._scrobbled = True
+            self._executor.submit(self._scrobble, self._current_track, self._track_start_time)
 
-    def _scrobble(self) -> None:
-        track = self._current_track
+    def _scrobble(self, track, timestamp: int) -> None:
         try:
             artist = getattr(getattr(track, "artist", None), "name", "")
             title = getattr(track, "name", "")
@@ -72,15 +81,21 @@ class Scrobbler:
             self._network.scrobble(
                 artist=artist,
                 title=title,
-                timestamp=self._track_start_time,
+                timestamp=timestamp,
                 album=album,
             )
-            self._scrobbled = True
-            log.info("Scrobbled: %s – %s", artist, title)
-            for cb in self.on_scrobble:
-                try:
-                    cb(track)
-                except Exception:
-                    pass
         except Exception as e:
             log.debug("Scrobble failed: %s", e)
+            # Allow a retry on a later tick if this track is still playing.
+            if self._current_track is track:
+                self._scrobbled = False
+            return
+        log.info("Scrobbled: %s – %s", artist, title)
+        for cb in self.on_scrobble:
+            try:
+                cb(track)
+            except Exception:
+                pass
+
+    def shutdown(self) -> None:
+        self._executor.shutdown(wait=False, cancel_futures=True)

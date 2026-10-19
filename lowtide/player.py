@@ -5,9 +5,8 @@ import json
 import os
 import sys
 from pathlib import Path
+import tempfile
 from typing import Callable, Optional
-
-SOCKET_PATH = "/tmp/lowtide-mpv.sock"
 
 _REPLAYGAIN_MODES = {"track", "album", "no"}
 
@@ -15,7 +14,6 @@ MPV_BASE_ARGS = [
     "mpv",
     "--no-video",
     "--idle=yes",
-    f"--input-ipc-server={SOCKET_PATH}",
     "--really-quiet",
     "--prefetch-playlist=yes",
     "--gapless-audio=yes",
@@ -58,10 +56,23 @@ def _build_mpv_args(config: dict) -> list[str]:
     return args
 
 
+def _make_socket_path() -> tuple[str, str | None]:
+    """Return (socket_path, private_dir). The socket is per process so several
+    instances don't clobber each other's IPC. $XDG_RUNTIME_DIR is already
+    private to the user; elsewhere (e.g. macOS) a private temp dir is created,
+    returned as private_dir so it can be removed on shutdown."""
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+    if runtime_dir and os.path.isdir(runtime_dir):
+        return os.path.join(runtime_dir, f"lowtide-mpv-{os.getpid()}.sock"), None
+    private_dir = tempfile.mkdtemp(prefix="lowtide-")
+    return os.path.join(private_dir, "mpv.sock"), private_dir
+
+
 class Player:
     def __init__(self, config: dict | None = None):
         cfg = config or {}
-        self._mpv_args = _build_mpv_args(cfg)
+        self._socket_path, self._socket_dir = _make_socket_path()
+        self._mpv_args = _build_mpv_args(cfg) + [f"--input-ipc-server={self._socket_path}"]
         self.crossfade_secs: int = int(cfg.get("crossfade", 0))
         self._process: Optional[asyncio.subprocess.Process] = None
         self._reader: Optional[asyncio.StreamReader] = None
@@ -78,8 +89,8 @@ class Player:
         self.on_track_end: list[Callable] = []
 
     async def start(self) -> None:
-        if Path(SOCKET_PATH).exists():
-            os.unlink(SOCKET_PATH)
+        if Path(self._socket_path).exists():
+            os.unlink(self._socket_path)
 
         self._process = await asyncio.create_subprocess_exec(
             *self._mpv_args,
@@ -88,13 +99,13 @@ class Player:
         )
 
         for _ in range(50):
-            if Path(SOCKET_PATH).exists():
+            if Path(self._socket_path).exists():
                 break
             await asyncio.sleep(0.1)
         else:
             raise RuntimeError("mpv IPC socket did not appear – is mpv installed?")
 
-        self._reader, self._writer = await asyncio.open_unix_connection(SOCKET_PATH)
+        self._reader, self._writer = await asyncio.open_unix_connection(self._socket_path)
         self._read_task = asyncio.create_task(self._read_loop())
         await self.set_volume(self.volume)
 
@@ -157,6 +168,9 @@ class Player:
     async def toggle_pause(self) -> None:
         await self._cmd(["cycle", "pause"])
 
+    async def set_paused(self, paused: bool) -> None:
+        await self._cmd(["set_property", "pause", paused])
+
     async def next(self) -> None:
         await self._cmd(["playlist-next", "force"])
 
@@ -216,5 +230,10 @@ class Player:
                 await self._process.wait()
             except Exception:
                 pass
-        if Path(SOCKET_PATH).exists():
-            os.unlink(SOCKET_PATH)
+        if Path(self._socket_path).exists():
+            os.unlink(self._socket_path)
+        if self._socket_dir:
+            try:
+                os.rmdir(self._socket_dir)
+            except OSError:
+                pass
