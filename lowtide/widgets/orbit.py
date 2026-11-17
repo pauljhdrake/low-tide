@@ -51,8 +51,6 @@ class Orbit(Widget, can_focus=True):
         Binding("down", "move('down')", "Down", show=False),
         Binding("left", "move('left')", "Left", show=False),
         Binding("right", "move('right')", "Right", show=False),
-        Binding("tab", "cycle(1)", "Next", show=False),
-        Binding("shift+tab", "cycle(-1)", "Previous", show=False),
         Binding("enter", "activate", "Centre", show=False),
     ]
 
@@ -150,10 +148,6 @@ class Orbit(Widget, can_focus=True):
             # direction around the ring, so the keys never feel stuck.
             best = max(range(len(positions)), key=lambda i: positions[i][0] * dx + positions[i][1] * dy)
         self._select(best)
-
-    def action_cycle(self, step: int) -> None:
-        if self.nodes:
-            self._select((self.selected + step) % len(self.nodes))
 
     def action_activate(self) -> None:
         node = self.selected_node
