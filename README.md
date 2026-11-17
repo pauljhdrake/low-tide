@@ -1,6 +1,6 @@
 # low-tide
 
-A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse your library, search, and play music without leaving the terminal – album art included.
+A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse your library, search, and play music without leaving the terminal, album art included.
 
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -9,7 +9,7 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 
 ![low-tide Ride the Tide](assets/screenshot_2.png)
 
-> **Disclaimer:** low-tide is an independent, unofficial project. It is not affiliated with, endorsed by, or supported by TIDAL Music AS. It uses the unofficial [tidalapi](https://github.com/tamland/python-tidal) library to access TIDAL's API. Use at your own risk – this may break if TIDAL changes their API, and use of unofficial API access may violate TIDAL's terms of service.
+> **Disclaimer:** low-tide is an independent, unofficial project. It is not affiliated with, endorsed by, or supported by TIDAL Music AS. It uses the unofficial [tidalapi](https://github.com/tamland/python-tidal) library to access TIDAL's API. Use at your own risk. It may break if TIDAL changes their API, and using unofficial API access may violate TIDAL's terms of service.
 
 ---
 
@@ -24,7 +24,7 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 **Now-playing sync fix** – if a stream URL failed to load mid-queue (for example under rate limiting), the now-playing bar, scrobbler and queue highlight could drift out of sync with the track actually playing. mpv's playlist position is now mapped explicitly to the queue, so the display always matches the audio, and an unloadable track is skipped cleanly rather than shifting everything after it.
 
 **Rate limiting improvements** – switching between long playlists no longer triggers rate-limit errors from TIDAL's API. This came from two changes:
-- **Windowed URL loading** – only the next 8 stream URLs are fetched at a time rather than the entire playlist upfront. When you switch playlists, far fewer wasted requests are made before the old load is cancelled. URLs for upcoming tracks are fetched quietly in the background as playback advances.
+- **Windowed URL loading** – only the next 8 stream URLs are fetched at a time rather than the entire playlist upfront. When you switch playlists, far fewer wasted requests are made before the old load is cancelled. URLs for upcoming tracks are fetched in the background as playback advances.
 - **Global throttle + auto-retry** – all API calls now share a single rate limiter (0.3 s minimum between requests). If a rate-limit response is received anyway, the request is retried automatically with the server's suggested back-off delay rather than surfacing an error.
 
 **Configurable background colour** – set `"background"` in `config.json` to any CSS colour string to override the app background. The default (`"ansi_default"`) continues to use your terminal's background and respects transparency settings.
@@ -34,32 +34,32 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 ## Features
 
 ### Playback
-- Full audio playback via `mpv` – no browser, no Electron
-- Gapless playback – tracks are pre-buffered so there is no gap between them
-- Four shuffle modes: off, random, favourites (weight by play count), and discovery (surface unplayed tracks) – press `s` to cycle
+- Full audio playback via `mpv`, no browser or Electron
+- Gapless playback, with tracks pre-buffered so there's no gap between them
+- Four shuffle modes: off, random, favourites (weight by play count), and discovery (surface unplayed tracks). Press `s` to cycle
 - Repeat and crossfade (with configurable fade duration)
-- ReplayGain normalisation – album or track mode via mpv
+- ReplayGain normalisation via mpv, in album or track mode
 - ALSA direct output for bit-perfect playback (optional, see [Configuration](#configuration))
 - Stream quality from 96 kbps AAC up to Hi-Res Lossless (TIDAL MAX)
 
 ### Discovery and radio
 - **Track radio** – press `R` on any track to build a 25-track radio seeded from that track using Last.fm similarity data, artist tag matching, and your play history
 - **Genre Radio** – browse TIDAL's curated genre catalogue or type any Last.fm tag (e.g. `shoegaze`, `drum and bass`) to build a genre playlist
-- **Ride the Tide** – personalised recommendations from the sidebar, built from your overall listening history across TIDAL, Last.fm, and Spotify; no seed track required
-- **Adventure Dial** – press `D` in any radio or genre screen to set how far recommendations venture from familiar territory:
-  - *Essential* – close matches only; high similarity threshold and lighter novelty weighting keep results in well-charted ground
-  - *Balanced* – the default; a moderate pool of similar artists with standard novelty weighting
-  - *Adventurous* – a wider net of similar artists with stronger novelty weighting, surfacing artists and tracks you have rarely or never heard
+- **Ride the Tide** – personalised recommendations from the sidebar, built from your overall listening history across TIDAL, Last.fm and Spotify, with no seed track needed
+- **Adventure Dial** – press `D` in any radio or genre screen to set how far recommendations stray from what you already know:
+  - *Essential* – close matches only, using a high similarity threshold and lighter novelty weighting
+  - *Balanced* – the default, with a moderate pool of similar artists and standard novelty weighting
+  - *Adventurous* – a wider pool of similar artists and stronger novelty weighting, so more of what comes up is stuff you've rarely or never heard
 - All radio modes work without Last.fm using play count data alone, with a prompt to configure it for richer results
 
 ### Library and browsing
 - Browse playlists, mixes, and TIDAL's For You recommendations
-- Favourites browser with separate tabs for saved tracks, albums, and artists – full library, not capped at 50
+- Favourites browser with separate tabs for saved tracks, albums, and artists, showing your whole library rather than the first 50
 - Sort favourite albums by name, date added, release date, or artist – press `S` to cycle
 - Search tracks, albums, and artists
 - Album and artist drill-down views with bio tab (artist description from TIDAL)
-- Love / unlove tracks – syncs with TIDAL favourites
-- Local library – browse and play locally stored files (FLAC, MP3, OPUS, OGG, M4A); metadata read via mutagen, library cached for fast startup
+- Love / unlove tracks, synced with TIDAL favourites
+- Local library: browse and play locally stored files (FLAC, MP3, OPUS, OGG, M4A); metadata read via mutagen, library cached for fast startup
 
 ### Listening Journey
 - Heatmap of your Last.fm scrobble history, organised by artist (rows) and month (columns)
@@ -69,13 +69,13 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 - Requires Last.fm to be configured (see [Configuration](#configuration))
 
 ### Queue
-- Add tracks to the queue without interrupting playback – press `a` on any track to add it, or `A` to add the entire album, playlist, or favourites list
-- Queue persists across restarts – reopens with the queue panel visible and playback resuming where you left off
+- Add tracks to the queue without interrupting playback. Press `a` on any track to add it, or `A` to add the entire album, playlist, or favourites list
+- Queue persists across restarts and reopens with the queue panel visible and playback resuming where you left off
 
 ### Now playing
 - Animated EQ visualiser with cava-style gravity fall, peak hold indicators, and analogue gradient colouring (toggle with `e`)
 - Synced lyrics displayed in the player bar, scrolling in time with playback
-- Track info – BPM, audio quality, and explicit flag
+- Track info: BPM, audio quality, and explicit flag
 - Album art rendered inline using the kitty graphics protocol
 
 ### Integrations
@@ -136,11 +136,11 @@ pip install -e .
 low-tide
 ```
 
-On first launch you will be prompted to authenticate with TIDAL via a device-code login – a URL is printed, open it in your browser and follow the prompts. Tokens are saved to `~/.config/low-tide/session.json` and reused on future launches.
+On first launch you will be prompted to authenticate with TIDAL via a device-code login. Open the URL it prints in your browser and follow the prompts. Tokens are saved to `~/.config/low-tide/session.json` and reused on future launches.
 
 ## Authentication and Token Handling
 
-low-tide uses TIDAL's OAuth 2.0 device-code flow. Your TIDAL password is never seen or stored by this app – you authenticate directly with TIDAL in your browser.
+low-tide uses TIDAL's OAuth 2.0 device-code flow. low-tide never sees or stores your TIDAL password. You log in directly with TIDAL in your browser.
 
 After login, TIDAL issues an access token and a refresh token. These are stored **locally on your machine** at:
 
@@ -151,7 +151,7 @@ After login, TIDAL issues an access token and a refresh token. These are stored 
 This file:
 - is never read by anything other than low-tide on your machine
 - is excluded from the repository via `.gitignore` and will never be committed
-- contains no password – only the OAuth tokens issued by TIDAL
+- contains no password, only the OAuth tokens issued by TIDAL
 - can be revoked at any time by contacting TIDAL support or deleting the file (you will be prompted to re-authenticate on next launch)
 
 The source code for token handling is in [`lowtide/tidal_client.py`](lowtide/tidal_client.py) if you want to inspect it.
@@ -202,7 +202,7 @@ Shuffle modes are driven by a local play count store at `~/.config/low-tide/play
 low-tide import-spotify ~/path/to/your/spotify-data/
 ```
 
-To get your data: go to [spotify.com](https://spotify.com) → Account → Privacy settings → Request data download. You'll receive an email with a zip file — extract it and pass the folder path to the command above. Only streams over 30 seconds count, matching the scrobbling threshold used elsewhere.
+To get your data: go to [spotify.com](https://spotify.com) → Account → Privacy settings → Request data download. You'll receive an email with a zip file. Extract it and pass the folder path to the command above. Only streams over 30 seconds count, matching the scrobbling threshold used elsewhere.
 
 ## Transparency
 
@@ -226,7 +226,7 @@ Create `~/.config/low-tide/config.json` to override defaults:
 | Key | Values | Default | Description |
 |-----|--------|---------|-------------|
 | `quality` | `"low"` `"high"` `"lossless"` `"max"` | `"lossless"` | Stream quality. `"max"` requires a TIDAL Max subscription. |
-| `music_dir` | string or array | — | Local music directory or directories. Adds a Local section to the sidebar. e.g. `"/home/user/Music"` or `["/home/user/Music", "/mnt/nas/Music"]` |
+| `music_dir` | string or array | none | Local music directory or directories. Adds a Local section to the sidebar. e.g. `"/home/user/Music"` or `["/home/user/Music", "/mnt/nas/Music"]` |
 | `replaygain` | `"album"` `"track"` `"no"` | `"album"` | ReplayGain mode. `"album"` preserves intended volume differences between tracks on the same album; `"track"` normalises every track to the same loudness. |
 | `alsa_output` | `true` / `false` | `false` | Route audio directly to ALSA, bypassing PulseAudio/PipeWire. Useful for bit-perfect output. |
 | `alsa_device` | string | system default | ALSA device name, e.g. `"hw:0,0"`. |
@@ -239,7 +239,7 @@ Create `~/.config/low-tide/config.json` to override defaults:
 
 ![EQ themes](assets/eq_themes.png)
 
-To enable Last.fm scrobbling, add a `lastfm` block. Get an API key at [last.fm/api](https://www.last.fm/api/account/create). `password_hash` is the MD5 hash of your password — generate it with `python3 -c "import hashlib; print(hashlib.md5('yourpassword'.encode()).hexdigest())"`.
+To enable Last.fm scrobbling, add a `lastfm` block. Get an API key at [last.fm/api](https://www.last.fm/api/account/create). `password_hash` is the MD5 hash of your password. Generate it with `python3 -c "import hashlib; print(hashlib.md5('yourpassword'.encode()).hexdigest())"`.
 
 ```json
 {
@@ -290,6 +290,6 @@ lowtide/
 
 ## License
 
-MIT – see [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](LICENSE) for details.
 
 This project is not affiliated with or endorsed by TIDAL Music AS. TIDAL is a registered trademark of TIDAL Music AS.
