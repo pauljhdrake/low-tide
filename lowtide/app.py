@@ -63,6 +63,7 @@ _NAV_BASE = [
     ("new-for-you", "New For You"),
     ("ride-the-tide", "Ride the Tide"),
     ("genre-radio", "Genre Radio"),
+    ("orbit", "Orbit"),
     ("listening-journey", "Listening Journey"),
 ]
 
@@ -725,10 +726,16 @@ class LowTideApp(App):
                 await self._open_ride_the_tide()
             elif key == "genre-radio":
                 await self._open_genre_radio()
+            elif key == "orbit":
+                await self._open_orbit()
             elif key == "listening-journey":
                 await self._open_journey()
             elif key == "local":
                 await self._open_local()
+
+    async def _open_orbit(self) -> None:
+        from lowtide.screens.orbit import OrbitScreen
+        await self._switch_root(OrbitScreen(), "orbit")
 
     async def _open_journey(self) -> None:
         from lowtide.screens.journey import JourneyScreen

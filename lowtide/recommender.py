@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 from enum import IntEnum
 from typing import TYPE_CHECKING
 
@@ -56,12 +57,61 @@ class Recommender:
         self._network = network  # pylast.LastFMNetwork or None
         self._store = store
         self._client = client
+        self._similar_cache: dict[str, list[tuple[str, float]]] = {}
+        self._similar_lock = threading.Lock()
 
     @property
     def has_lastfm(self) -> bool:
         return self._network is not None
 
     # ── Public API ────────────────────────────────────────────────────────
+
+    def similar_artists(
+        self, artist_name: str, mode: DiscoveryMode = DiscoveryMode.BALANCED
+    ) -> list[tuple[str, float]]:
+        """
+        Last.fm similar artists for the orbit view, as [(name, match), ...]
+        sorted by match. The Adventure Dial picks how far out to look:
+        Essential keeps the closest few, Adventurous skips past the obvious
+        neighbours. Results are cached per artist. Needs Last.fm.
+        """
+        if not self.has_lastfm or not artist_name:
+            return []
+        key = artist_name.lower()
+        with self._similar_lock:
+            cached = self._similar_cache.get(key)
+        if cached is None:
+            cached = []
+            try:
+                for sim in self._network.get_artist(artist_name).get_similar(limit=30):
+                    name = getattr(sim.item, "name", "") or ""
+                    if name and name.lower() != key:
+                        cached.append((name, float(sim.match)))
+            except Exception as e:
+                log.debug("similar artists failed for %s: %s", artist_name, e)
+                return []  # don't cache failures, so a retry can succeed
+            with self._similar_lock:
+                self._similar_cache[key] = cached
+        if mode == DiscoveryMode.ESSENTIAL:
+            return [s for s in cached if s[1] >= 0.25][:7]
+        if mode == DiscoveryMode.ADVENTUROUS:
+            # Skip the closest few and take every other one further out.
+            return cached[3:][::2][:11]
+        return cached[:9]
+
+    def artist_display_name(self, artist_name: str) -> str:
+        """Last.fm's spelling of an artist name (play counts are stored
+        lower-cased). Falls back to title case if Last.fm can't help."""
+        if self.has_lastfm:
+            try:
+                name = self._network.get_artist(artist_name).get_name(properly_capitalized=True)
+                if name:
+                    return name
+            except Exception as e:
+                log.debug("artist name lookup failed for %s: %s", artist_name, e)
+        return artist_name.title()
+
+    # ── Recommendation queues ─────────────────────────────────────────────
 
     def build_track_radio(
         self, track, n: int = 25, mode: DiscoveryMode = DiscoveryMode.BALANCED

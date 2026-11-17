@@ -83,6 +83,16 @@ class PlayCountStore:
                     totals[artist] += count
         return sorted(totals.items(), key=lambda x: -x[1])[:limit]
 
+    def artist_plays(self) -> dict[str, int]:
+        """Total plays per artist, keyed by lower-cased artist name."""
+        from collections import defaultdict
+        totals: dict[str, int] = defaultdict(int)
+        with self._lock:
+            for key, count in self._counts.items():
+                if "\x00" in key:
+                    totals[key.split("\x00", 1)[0]] += count
+        return dict(totals)
+
     def increment(self, track) -> None:
         key = _key_for(track)
         with self._lock:

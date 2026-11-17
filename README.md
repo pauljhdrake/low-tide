@@ -15,6 +15,8 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 
 ## Recent Updates
 
+**Orbit** – a new way to explore similar artists. Pick Orbit from the sidebar (or press `O` on any artist page) and you get one artist in the middle with their closest Last.fm matches around them. The more similar an artist is, the nearer they sit, and anyone you've already played is highlighted. Arrow keys move around the ring, Enter puts the selected artist in the middle, and Backspace steps back along your trail, so you can wander out from something familiar one hop at a time. `o` opens an artist's page and `R` starts a radio from them. The Adventure Dial works here too, and Orbit needs Last.fm to be configured.
+
 **Local playback, MPRIS controls and other fixes** – local files play again, after the hi-res change broke them, and they now survive a restart in the saved queue. MPRIS controls behave properly: `Pause` no longer resumes playback when already paused, `Next` respects favourites and discovery shuffle, and volume, shuffle and repeat set from your desktop or `playerctl` now actually apply. Tracks you've already favourited show ♥, and `l` can unlove them. Last.fm requests run in the background so a slow connection no longer freezes the UI. Your saved TIDAL login is now only readable by you, and running two instances at once no longer breaks playback in either. Album art also displays cleanly in Konsole and other Sixel terminals, without grey bars or leftover fragments around it. Thanks to @Ritsj for both PRs.
 
 **MPRIS fixes for strict media clients** – low-tide now works with stricter MPRIS clients such as Quickshell/Caelestia, not just playerctl. The D-Bus service was silently failing to register because getter-only properties were declared writable, and even once visible it was missing root-interface properties (`Fullscreen`, `CanSetFullscreen`, `DesktopEntry`) that strict clients require. Live title, artist, artwork, duration and playback status now reach clients too, since property-change signals were being emitted through a nonexistent API and dropped. Seeking also follows MPRIS semantics properly: relative `Seek` and absolute progress-bar `SetPosition` both work. Thanks to @JDY-exe for the detailed report and diagnosis.
@@ -50,6 +52,7 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
   - *Essential* – close matches only, using a high similarity threshold and lighter novelty weighting
   - *Balanced* – the default, with a moderate pool of similar artists and standard novelty weighting
   - *Adventurous* – a wider pool of similar artists and stronger novelty weighting, so more of what comes up is stuff you've rarely or never heard
+- **Orbit** – a map of similar artists around one artist in the middle, with nearer meaning more similar. Enter re-centres on the selected artist so you can walk outward hop by hop; `o` opens their page and `R` starts a radio. Needs Last.fm
 - All radio modes work without Last.fm using play count data alone, with a prompt to configure it for richer results
 
 ### Library and browsing
@@ -171,7 +174,10 @@ The source code for token handling is in [`lowtide/tidal_client.py`](lowtide/tid
 | `l` | Love / unlove current track |
 | `x` | Toggle crossfade |
 | `R` | Start radio from focused track |
-| `D` | Cycle Adventure Dial (Essential → Balanced → Adventurous) in radio / genre screens |
+| `D` | Cycle Adventure Dial (Essential → Balanced → Adventurous) in radio / genre / Orbit screens |
+| `O` | Open Orbit centred on the current artist (artist page) |
+| `enter` / `backspace` | Re-centre on the selected artist / step back (Orbit) |
+| `o` / `c` | Open the selected artist's page / re-centre on what's playing (Orbit) |
 | `G` | Toggle heatmap scale (Listening Journey) |
 | `a` | Add focused track to queue |
 | `A` | Add all tracks in current view to queue |
