@@ -4,6 +4,7 @@ import re
 
 from textual import work
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Label, ListItem, ListView, Static, TabPane, TabbedContent
@@ -25,6 +26,8 @@ def _clean_bio(text: str) -> str:
 
 
 class ArtistScreen(Widget):
+    BINDINGS = [Binding("O", "orbit", "Orbit", show=True)]
+
     DEFAULT_CSS = """
     ArtistScreen {
         height: 1fr;
@@ -70,6 +73,12 @@ class ArtistScreen(Widget):
     def __init__(self, artist, **kwargs):
         super().__init__(**kwargs)
         self._artist = artist
+
+    async def action_orbit(self) -> None:
+        from lowtide.screens.orbit import OrbitScreen
+        name = getattr(self._artist, "name", None)
+        if name:
+            await self.app.push_view(OrbitScreen(artist_name=name))
 
     def compose(self) -> ComposeResult:
         name = getattr(self._artist, "name", "Artist")
