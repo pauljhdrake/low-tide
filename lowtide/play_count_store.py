@@ -189,7 +189,8 @@ class PlayCountStore:
                 with open(fpath) as f:
                     entries = json.load(f)
                 for entry in entries:
-                    ms = entry.get("ms_played", 0)
+                    # Extended history uses ms_played, legacy uses msPlayed
+                    ms = entry.get("ms_played", entry.get("msPlayed", 0)) or 0
                     if ms < 30_000:
                         continue
                     # Extended history format

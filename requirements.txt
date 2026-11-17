@@ -1,4 +1,9 @@
+# Kept in sync with [project.dependencies] in pyproject.toml, which is the
+# source of truth (pip install . / pip install -e .).
 tidalapi>=0.8.11
-textual>=8.0.0
+textual>=8.2.3
 textual-image>=0.12.0,<0.13
-Pillow>=11.0.0
+Pillow>=12.2.0
+dbus-next>=0.2.3
+pylast>=7.0.2
+mutagen>=1.47.0

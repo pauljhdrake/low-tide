@@ -112,7 +112,19 @@ class LocalLibrary:
         self._write_cache(updated)
         self._tracks = [self._entry_to_track(e) for e in updated]
 
-    def _entry_to_track(self, e: dict) -> LocalTrack:
+    @staticmethod
+    def track_from_path(path: str) -> LocalTrack | None:
+        """Build a LocalTrack straight from a file, without scanning a library.
+        Returns None if the file is missing or its tags can't be read."""
+        if not os.path.isfile(path):
+            return None
+        tags = _read_tags(path)
+        if not tags:
+            return None
+        return LocalLibrary._entry_to_track({"path": path, **tags})
+
+    @staticmethod
+    def _entry_to_track(e: dict) -> LocalTrack:
         artist = LocalArtist(name=e.get("artist", "Unknown Artist"))
         album_artist = LocalArtist(name=e.get("album_artist", artist.name))
         album = LocalAlbum(
