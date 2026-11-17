@@ -76,7 +76,7 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 - Animated EQ visualiser with cava-style gravity fall, peak hold indicators, and analogue gradient colouring (toggle with `e`)
 - Synced lyrics displayed in the player bar, scrolling in time with playback
 - Track info: BPM, audio quality, and explicit flag
-- Album art rendered inline using the kitty graphics protocol
+- Album art rendered inline, using the kitty graphics protocol or Sixel depending on your terminal, with a block-character fallback elsewhere
 
 ### Integrations
 - **MPRIS2** – media keys, `playerctl`, and desktop now-playing panels
@@ -90,12 +90,12 @@ A terminal UI client for [TIDAL](https://tidal.com), built with Python. Browse y
 
 ## Requirements
 
-**low-tide is Linux-only.** It relies on Unix sockets for mpv IPC, D-Bus for MPRIS, and the kitty graphics protocol for album art. macOS and Windows are not supported.
+**low-tide is Linux-only.** It relies on Unix sockets for mpv IPC and D-Bus for MPRIS. macOS and Windows are not supported.
 
 - **Python 3.11+**
 - **A TIDAL subscription** (HiFi or higher recommended for lossless playback)
 - **mpv** – for audio playback (must be installed separately)
-- **kitty terminal** (recommended) – for inline album art; other terminals will work without art
+- **A terminal with image support** (recommended) – the kitty graphics protocol (e.g. kitty) or Sixel (e.g. Konsole) shows album art at full resolution. Other terminals show a lower-resolution version drawn with coloured block characters
 
 ### Installing mpv
 
@@ -269,7 +269,7 @@ Example for bit-perfect TIDAL MAX output:
 
 - **Unofficial API** – relies on [tidalapi](https://github.com/tamland/python-tidal), which may break when TIDAL updates their backend
 - **mpv required** – audio playback depends on mpv being installed as a system package
-- **Album art requires kitty** – the kitty graphics protocol is used for inline images; other terminals will show the app without art
+- **Album art quality depends on your terminal** – full resolution needs the kitty graphics protocol or Sixel. Other terminals fall back to coloured block characters
 - **No MQA/Atmos support** – stream quality depends on your subscription; format handling is delegated to mpv
 
 ## Project Structure
