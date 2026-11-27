@@ -44,6 +44,50 @@ _MIN_CALL_INTERVAL = 0.3
 # Retry attempts before letting TooManyRequests propagate
 _MAX_RETRIES = 2
 
+_MANIFEST_PREFIX = "low-tide-manifests-"
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, but belongs to another user
+    return True
+
+
+def _remove_stale_manifest_dirs() -> None:
+    """Remove manifest dirs whose low-tide process is gone (e.g. after a crash).
+
+    Only this user's dirs named low-tide-manifests-<pid>-* are touched, and only
+    when <pid> is no longer running, so another live instance keeps its files.
+    """
+    import shutil
+
+    tmp = tempfile.gettempdir()
+    try:
+        entries = os.scandir(tmp)
+    except OSError:
+        return
+    with entries:
+        for entry in entries:
+            if not entry.name.startswith(_MANIFEST_PREFIX):
+                continue
+            pid_part = entry.name[len(_MANIFEST_PREFIX):].split("-", 1)[0]
+            if not pid_part.isdigit():
+                continue
+            try:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+                if entry.stat(follow_symlinks=False).st_uid != os.getuid():
+                    continue
+            except OSError:
+                continue
+            if _pid_alive(int(pid_part)):
+                continue
+            shutil.rmtree(entry.path, ignore_errors=True)
+
 
 class TidalClient:
     def __init__(self):
@@ -65,8 +109,12 @@ class TidalClient:
             self._quality_floor = 0
         # Hi-res DASH manifests are written here as temp .mpd files for mpv to
         # play. The dir is per process so a second instance doesn't delete
-        # manifests the first is still playing; it's removed on exit.
-        self._manifest_dir = tempfile.mkdtemp(prefix="low-tide-manifests-")
+        # manifests the first is still playing; it's removed on exit. The PID in
+        # the name lets a later launch remove dirs left behind by a crash.
+        _remove_stale_manifest_dirs()
+        self._manifest_dir = tempfile.mkdtemp(
+            prefix=f"{_MANIFEST_PREFIX}{os.getpid()}-"
+        )
         self._try_load_tokens()
         # The loaded access token may have been refreshed during login.
         self.save_tokens_if_changed()
