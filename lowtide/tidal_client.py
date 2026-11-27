@@ -45,6 +45,10 @@ _MIN_CALL_INTERVAL = 0.3
 _MAX_RETRIES = 2
 
 
+# Upper bound on playlists fetched for the library (50 per request).
+_MAX_PLAYLISTS = 1000
+
+
 class TidalClient:
     def __init__(self):
         self._api_lock = threading.Lock()
@@ -239,7 +243,21 @@ class TidalClient:
     # --- Library ---
 
     def get_user_playlists(self) -> list:
-        return self._api_call(self.session.user.playlists)
+        """Playlists the user created plus playlists by others they added.
+
+        TIDAL returns at most 50 per request, so page until a short page.
+        """
+        user = self.session.user
+        page_size = 50
+        playlists: list = []
+        for offset in range(0, _MAX_PLAYLISTS, page_size):
+            page = self._api_call(
+                user.playlist_and_favorite_playlists, offset=offset, limit=page_size
+            )
+            playlists.extend(page)
+            if len(page) < page_size:
+                break
+        return playlists
 
     def get_favorite_tracks(self) -> list:
         return self._api_call(self.session.user.favorites.tracks_paginated)
