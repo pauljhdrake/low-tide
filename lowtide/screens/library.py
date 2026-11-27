@@ -4,6 +4,22 @@ from textual import work
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Label, ListItem, ListView, TabPane, TabbedContent
+from tidalapi.playlist import UserPlaylist
+
+
+def _added_label(playlist) -> str:
+    """Label for a playlist the user added rather than created.
+
+    TIDAL's own playlists have creator id 0. For other users TIDAL sends only
+    an id, and tidalapi fills in the placeholder name "user", so say "added".
+    """
+    creator = getattr(playlist, "creator", None)
+    if creator is None or getattr(creator, "id", None) == 0:
+        return "by TIDAL"
+    name = getattr(creator, "name", None)
+    if name and name != "user":
+        return f"by {name}"
+    return "added"
 
 
 class LibraryScreen(Widget):
@@ -63,7 +79,11 @@ class LibraryScreen(Widget):
         for pl in playlists:
             name = getattr(pl, "name", "?")
             n = getattr(pl, "num_tracks", getattr(pl, "numberOfTracks", ""))
-            item = ListItem(Label(f"{name}  [dim]{n} tracks[/dim]"))
+            info = f"{n} tracks"
+            if not isinstance(pl, UserPlaylist):
+                # Not created by the user: added from someone else.
+                info += f" · {_added_label(pl)}"
+            item = ListItem(Label(f"{name}  [dim]{info}[/dim]"))
             item._playlist = pl
             lv.append(item)
 
