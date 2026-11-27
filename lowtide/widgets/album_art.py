@@ -10,6 +10,9 @@ from textual import work
 from textual.app import ComposeResult
 from textual.geometry import Region
 from textual.widget import Widget
+# Private textual-image internals (_terminal.get_cell_size, _ImageSixelImpl,
+# _NoopRenderable). Written against textual-image 0.12.x (the <0.13 pin in
+# pyproject.toml); recheck these imports and _SixelImpl when lifting the pin.
 from textual_image._terminal import get_cell_size
 from textual_image.widget import Image as TImage
 from textual_image.widget import SixelImage
